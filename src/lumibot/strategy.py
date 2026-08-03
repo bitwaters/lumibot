@@ -24,10 +24,10 @@ class StrategyOrder:
     opened_at: float
     buy_slip: float
     sell_slip: float
-    hard_stop_pct: float = -0.50
-    stage1_tp_pct: float = 0.30
-    trail_drawdown_pct: float = 0.50
-    timeout_hours: float = 4.0
+    hard_stop_pct: float = -0.30
+    stage1_tp_pct: float = 0.25
+    trail_drawdown_pct: float = 0.30
+    timeout_hours: float = 2.0
 
     @staticmethod
     def buy_fill_price(mark: float, buy_slip: float) -> float:
@@ -48,10 +48,10 @@ class StrategyOrder:
         buy_slip: float,
         sell_slip: float,
         opened_at: float,
-        hard_stop_pct: float = -0.50,
-        stage1_tp_pct: float = 0.30,
-        trail_drawdown_pct: float = 0.50,
-        timeout_hours: float = 4.0,
+        hard_stop_pct: float = -0.30,
+        stage1_tp_pct: float = 0.25,
+        trail_drawdown_pct: float = 0.30,
+        timeout_hours: float = 2.0,
     ) -> StrategyOrder:
         entry = cls.buy_fill_price(mark, buy_slip)
         qty = notional_usd / entry

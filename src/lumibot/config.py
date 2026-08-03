@@ -111,10 +111,10 @@ class GlobalCfg(BaseModel):
 
 class StrategyCfg(BaseModel):
     notional_usd: float = 20
-    hard_stop_pct: float = -0.50
-    stage1_tp_pct: float = 0.30
-    trail_drawdown_pct: float = 0.50
-    timeout_hours: float = 4
+    hard_stop_pct: float = -0.30
+    stage1_tp_pct: float = 0.25
+    trail_drawdown_pct: float = 0.30
+    timeout_hours: float = 2
     snapshots_sec: list[int] = Field(default_factory=lambda: [60, 300, 900, 3600])
     loss_cooldown_min: int = 180
     post_close_cooldown_min: int = 45
