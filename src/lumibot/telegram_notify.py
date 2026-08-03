@@ -168,31 +168,38 @@ def render_paper_event(ev: PaperTradeEvent) -> str:
     pnl_s = _pnl(ev.pnl)
 
     if ev.kind == "stage1":
-        title = f"{icon} [{tag}] 回本减仓  ${sym}  {pnl_s}"
-    else:
-        title = f"{icon} [{tag}] {reason}  ${sym}  {pnl_s}"
-
-    lines = [title, "", ev.token, ""]
-    if ev.entry_mc is not None and ev.exit_mc is not None and ev.entry_mc > 0:
-        chg = (ev.exit_mc / ev.entry_mc) - 1.0
-        verb = "减仓" if ev.kind == "stage1" else "平仓"
-        lines.append(
-            f"💰 入场 {_usd_compact(ev.entry_mc)} → {verb} {_usd_compact(ev.exit_mc)}  ({_pct(chg)})"
-        )
-        if ev.kind == "stage1":
+        lines = [
+            f"{icon} [{tag}] 回本减仓  ${sym}  {pnl_s}",
+            "",
+            ev.token,
+            "",
+        ]
+        if ev.entry_mc is not None and ev.exit_mc is not None and ev.entry_mc > 0:
+            chg = (ev.exit_mc / ev.entry_mc) - 1.0
             lines.append(
-                f"回收约 {_usd_compact(ev.qty * ev.fill_price)}  ·  剩余仓继续  ·  成本已上移"
+                f"💰 入场 {_usd_compact(ev.entry_mc)} → 减仓 {_usd_compact(ev.exit_mc)}  ({_pct(chg)})"
             )
-        else:
-            extra = f"名义 {_usd_compact(ev.notional_usd)}"
-            if ev.hold_sec is not None:
-                extra = f"⏱ 持仓 {format_duration(ev.hold_sec)}  ·  {extra}"
-            if ev.reason == "trail" and ev.peak_mc is not None:
-                extra = f"📈 峰值 {_usd_compact(ev.peak_mc)}  ·  {extra}"
-            lines.append(extra)
-    elif ev.kind == "stage1":
         lines.append(f"💰 回收约 {_usd_compact(ev.qty * ev.fill_price)}  ·  剩余仓继续")
         lines.append("📌 成本已上移")
+        return "\n".join(lines)
+
+    lines = [
+        f"{icon} [{tag}] {reason}  ${sym}  {pnl_s}",
+        "",
+        ev.token,
+        "",
+    ]
+    if ev.entry_mc is not None and ev.exit_mc is not None and ev.entry_mc > 0:
+        chg = (ev.exit_mc / ev.entry_mc) - 1.0
+        lines.append(
+            f"💰 入场 {_usd_compact(ev.entry_mc)} → 平仓 {_usd_compact(ev.exit_mc)}  ({_pct(chg)})"
+        )
+        extra = f"名义 {_usd_compact(ev.notional_usd)}"
+        if ev.hold_sec is not None:
+            extra = f"⏱ 持仓 {format_duration(ev.hold_sec)}  ·  {extra}"
+        if ev.reason == "trail" and ev.peak_mc is not None:
+            extra = f"📈 峰值 {_usd_compact(ev.peak_mc)}  ·  {extra}"
+        lines.append(extra)
     else:
         lines.append(f"标记价 {_price(ev.mark)}  ·  盈亏 {pnl_s}")
         lines.append(f"名义 {_usd_compact(ev.notional_usd)}  ·  入场 {_price(ev.entry_price)}")
@@ -320,8 +327,7 @@ def render_alerts(rows: list) -> str:
         ts = datetime.fromtimestamp(row["created_at"], tz=timezone.utc).strftime("%m-%d %H:%M")
         tag = {"sol": "SOL", "bsc": "BSC", "robinhood": "RH"}.get(row["chain"], row["chain"].upper())
         lines.append(f"· {ts}  [{tag}] ${sym}{exec_status}")
-        tok = row["token"]
-        lines.append(f"  {tok[:20]}…" if len(tok) > 20 else f"  {tok}")
+        lines.append(f"  {row['token']}")
     return "\n".join(lines)
 
 
@@ -338,9 +344,14 @@ def render_help() -> str:
             "· 硬止损：相对开仓标记 -20%",
             "· 回本 +30% 减仓；峰值回撤 30%；超时 4h",
             "· 硬止损后再入场 3h；普通平仓后再入场 45m",
-            "· 开仓价 = 过门后重取的当时市价（筛选用当时快照，不二次门控）",
+            "· 开仓/推送指标 = 过门后重拉的实时 token 快照（筛选用当时快照，不二次门控）",
+            "· ⏱ 延迟 = 本机见到该条 → 发出前的处理耗时（含过门重拉；不含轮询等待）",
         ]
     )
+
+
+def render_unknown_command() -> str:
+    return "📖 未知指令\n\n发送 /help 查看可用命令。"
 
 
 def _mc_line(cand: TokenCandidate) -> str:

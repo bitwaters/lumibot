@@ -125,8 +125,26 @@ def extract_trending_fields(raw: dict) -> dict[str, float | None]:
     }
 
 
+def flatten_token_info(info: dict) -> dict:
+    """Lift nested GMGN token_info fields (stat/pool) into a flat dict for extractors."""
+    flat = dict(info)
+    stat = info.get("stat")
+    if isinstance(stat, dict):
+        for key in (
+            "holder_count",
+            "top_10_holder_rate",
+            "visiting_count",
+        ):
+            if key in stat and flat.get(key) is None:
+                flat[key] = stat[key]
+    pool = info.get("pool")
+    if isinstance(pool, dict) and flat.get("liquidity") is None and pool.get("liquidity") is not None:
+        flat["liquidity"] = pool.get("liquidity")
+    return flat
+
+
 def merge_info_fields(cand: TokenCandidate, info: dict, *, force_visiting: bool = False) -> None:
-    fields = extract_trending_fields(info)
+    fields = extract_trending_fields(flatten_token_info(info))
     if cand.market_cap is None:
         cand.market_cap = fields["market_cap"]
     if cand.liquidity is None:
@@ -140,7 +158,7 @@ def merge_info_fields(cand: TokenCandidate, info: dict, *, force_visiting: bool 
     if force_visiting:
         # Signal visiting MUST come from token info; never keep payload fallback.
         cand.visiting_count = fields["visiting_count"]
-    # Trending visiting MUST stay on payload only — never fill/overwrite from token info.
+    # Trending visiting MUST stay on payload only during gate — never fill/overwrite from token info.
     if not cand.symbol:
         cand.symbol = info.get("symbol") or info.get("token_symbol")
     if not cand.name:
@@ -149,6 +167,33 @@ def merge_info_fields(cand: TokenCandidate, info: dict, *, force_visiting: bool 
         cand.platform = extract_platform(info)
     if cand.open_timestamp is None:
         cand.open_timestamp = parse_open_timestamp(info)
+
+
+def apply_push_snapshot(
+    cand: TokenCandidate,
+    info: dict,
+    *,
+    price: float | None,
+    market_cap: float | None,
+) -> None:
+    """Overwrite card/open fields from a post-gate uncached token_info snapshot."""
+    fields = extract_trending_fields(flatten_token_info(info))
+    cand.liquidity = fields["liquidity"]
+    cand.top10_rate = fields["top10_rate"]
+    cand.holder_count = fields["holder_count"]
+    cand.visiting_count = fields["visiting_count"]
+    ot = parse_open_timestamp(info)
+    if ot is not None:
+        cand.open_timestamp = ot
+    sym = info.get("symbol") or info.get("token_symbol")
+    if sym:
+        cand.symbol = sym
+    name = info.get("name") or info.get("token_name")
+    if name:
+        cand.name = name
+    cand.price = price if price is not None and price > 0 else fields["price"]
+    # Prefer parser MC from the same snapshot; never keep gate-era MC on the push card.
+    cand.market_cap = market_cap if market_cap is not None and market_cap > 0 else None
 
 
 def parse_open_timestamp(data: dict) -> float | None:

@@ -11,6 +11,7 @@ from lumibot.db import Database
 from lumibot.executors import Executor, LiveExecutor, PaperExecutor
 from lumibot.filters import (
     apply_light_filters,
+    apply_push_snapshot,
     evaluate_mc_extension,
     extract_platform,
     extract_signal_fields,
@@ -181,16 +182,16 @@ class ChainPipeline:
         )
         await self._enrich_and_process(cand, need_visiting_from_info=False)
 
-    async def _fresh_quote(self, cand: TokenCandidate) -> tuple[float | None, float | None]:
+    async def _fresh_quote(self, cand: TokenCandidate) -> tuple[float | None, float | None, dict]:
         price_source = self.app_cfg.global_.price_source
         last_err: Exception | None = None
         for attempt in range(2):
             try:
-                price, mc = await self.client.get_price_and_market_cap(
+                price, mc, info = await self.client.get_fresh_snapshot(
                     cand.chain, cand.address, price_source
                 )
                 if price is not None and price > 0:
-                    return price, mc
+                    return price, mc, info if isinstance(info, dict) else {}
             except Exception as exc:  # noqa: BLE001
                 last_err = exc
                 logger.warning(
@@ -209,7 +210,7 @@ class ChainPipeline:
                 cand.address,
                 last_err,
             )
-        return None, None
+        return None, None, {}
 
     async def _enrich_and_process(self, cand: TokenCandidate, *, need_visiting_from_info: bool) -> None:
         needs_info = need_visiting_from_info or any(
@@ -288,14 +289,13 @@ class ChainPipeline:
             await self._reject(cand, reason)
             return
 
-        price, mc = await self._fresh_quote(cand)
+        price, mc, info = await self._fresh_quote(cand)
         if price is None or price <= 0:
             await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
             await self._reject(cand, "no_price")
             return
-        cand.price = price
-        # Card MC must match the post-gate quote moment; never keep the gate snapshot MC.
-        cand.market_cap = mc if mc is not None and mc > 0 else None
+        # Push card + open_mark share this uncached snapshot (not gate/enrich cache).
+        apply_push_snapshot(cand, info, price=price, market_cap=mc)
 
         text_payload: dict[str, Any] = {
             "chain": cand.chain,

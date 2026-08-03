@@ -240,13 +240,22 @@ class GmgnClient:
     async def get_price_and_market_cap(
         self, chain: str, address: str, source: str = "token_info"
     ) -> tuple[float | None, float | None]:
+        price, mc, _info = await self.get_fresh_snapshot(chain, address, source)
+        return price, mc
+
+    async def get_fresh_snapshot(
+        self, chain: str, address: str, source: str = "token_info"
+    ) -> tuple[float | None, float | None, dict[str, Any]]:
+        """Uncached token_info + price/mc for post-gate open and push card."""
         info = await self.get_token_info(chain, address, use_cache=False)
+        if not isinstance(info, dict):
+            info = {}
         price = _price_from_info_dict(info)
         if source == "kline":
             kline_px = await self._price_from_kline(chain, address)
             if kline_px is not None:
                 price = kline_px
-        return price, _market_cap_from_info_dict(info)
+        return price, _market_cap_from_info_dict(info), info
 
     async def _price_from_info(self, chain: str, address: str) -> float | None:
         info = await self.get_token_info(chain, address, use_cache=False)

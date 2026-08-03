@@ -36,12 +36,23 @@ class FakeClient:
         return self.prices.get(address, 1.0)
 
     async def get_price_and_market_cap(self, chain: str, address: str, source: str = "token_info"):
+        price, mc, _info = await self.get_fresh_snapshot(chain, address, source)
+        return price, mc
+
+    async def get_fresh_snapshot(self, chain: str, address: str, source: str = "token_info"):
         if self.quote_fail:
-            return None, None
+            return None, None, {}
         price = self.exit_quote_prices.get(address, self.prices.get(address, 1.0))
         if address in self.market_caps:
-            return price, self.market_caps[address]
-        return price, 100_000
+            mc = self.market_caps[address]
+        else:
+            mc = 100_000
+        info = dict(self.info.get(address, {}))
+        if "price" not in info:
+            info["price"] = price
+        if mc is not None and "market_cap" not in info:
+            info["market_cap"] = mc
+        return price, mc, info
 
 
 class FakeNotifier:
@@ -197,6 +208,48 @@ async def test_happy_path_alerts_and_opens_paper(harness):
 
 
 @pytest.mark.asyncio
+async def test_push_card_uses_fresh_snapshot_not_gate_metrics(harness):
+    pipe, client, notifier, db, _app = harness
+    client.security["fresh"] = _pass_security_sol()
+    client.prices["fresh"] = 2.0
+    client.market_caps["fresh"] = 220_000
+    # Gate uses signal payload metrics; info supplies visiting + post-gate card fields.
+    client.info["fresh"] = {
+        "symbol": "LIVE",
+        "liquidity": 55_000,
+        "holder_count": 900,
+        "visiting_count": 400,
+        "price": 2.0,
+        "market_cap": 220_000,
+        "open_timestamp": 1_700_000_000,
+        "stat": {"top_10_holder_rate": 0.15, "holder_count": 900},
+    }
+    await pipe._handle_signal(
+        {
+            "address": "fresh",
+            "signal_type": 12,
+            "symbol": "OLD",
+            "market_cap": 100_000,
+            "trigger_mc": 100_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+            "price": 1.0,
+        }
+    )
+    assert notifier.paper_status == ["opened"]
+    card = notifier.cards[0]
+    assert "$220.0K" in card
+    assert "$55.0K" in card
+    assert "900" in card
+    assert "400" in card
+    assert "15.0%" in card
+    assert "$LIVE" in card
+    row = await db.get_open_paper("sol", "fresh")
+    assert abs(float(row["open_mark"]) - 2.0) < 1e-9
+
+
+@pytest.mark.asyncio
 async def test_fresh_quote_mc_outside_filter_still_opens(harness):
     """Post-gate MC must not re-run light filters / mc_extension."""
     pipe, client, notifier, db, _app = harness
@@ -219,6 +272,7 @@ async def test_fresh_quote_mc_outside_filter_still_opens(harness):
     assert notifier.paper_status == ["opened"]
     assert await db.get_open_paper("sol", "wide") is not None
     assert "$50.00M" in notifier.cards[0]
+
 
 @pytest.mark.asyncio
 async def test_safety_reject_no_alert(harness):

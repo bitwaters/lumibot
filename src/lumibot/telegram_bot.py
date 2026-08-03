@@ -16,6 +16,7 @@ from lumibot.telegram_notify import (
     render_rejects,
     render_stats,
     render_status,
+    render_unknown_command,
 )
 
 logger = logging.getLogger(__name__)
@@ -132,7 +133,7 @@ def build_dispatcher(
     async def fallback(message: Message) -> None:
         if not _authorized(message):
             return
-        await message.answer("未知指令。发送 /help 查看可用命令。", parse_mode=None)
+        await message.answer(render_unknown_command(), parse_mode=None)
 
     dp.include_router(router)
     return dp

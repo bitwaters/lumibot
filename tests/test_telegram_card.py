@@ -125,13 +125,15 @@ def test_paper_stage1_event_uses_mc():
     assert "✂️ [SOL] 回本减仓  $STG" in text
     assert "TokStage" in text
     assert "入场 $100.0K → 减仓 $130.0K" in text
-    assert "剩余仓继续" in text
+    assert "回收约" in text
+    assert "📌 成本已上移" in text
 
 
 def test_help_and_positions_cards():
     help_text = render_help()
     assert "/stats" in help_text
-    assert "过门后重取" in help_text
+    assert "过门后重拉" in help_text or "过门后重取" in help_text
+    assert "⏱ 延迟" in help_text
     assert "📋 持仓 0 笔" in render_positions([])
     summary = {
         "open_count": 1,
