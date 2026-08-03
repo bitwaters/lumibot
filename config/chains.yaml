@@ -42,7 +42,7 @@ chains:
       liquidity_min: 5000
       top10_max: 0.30
       holders_min: 100
-      visiting_min: 100
+      visiting_min: 200
       max_mc_extension: 2.0
       enforce_mc_extension: false
     safety:

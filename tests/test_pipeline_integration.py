@@ -90,7 +90,7 @@ def _pass_info() -> dict[str, Any]:
         "liquidity": 20_000,
         "top10_rate": 0.2,
         "holder_count": 200,
-        "visiting_count": 150,
+        "visiting_count": 220,
         "price": 1.0,
     }
 
@@ -286,7 +286,7 @@ async def test_safety_reject_no_alert(harness):
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
-            "visiting_count": 150,
+            "visiting_count": 220,
             "price": 1.0,
         }
     )
@@ -357,7 +357,7 @@ async def test_paper_skip_second_open_still_alerts(harness):
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
-            "visiting_count": 150,
+            "visiting_count": 220,
             "price": 1.0,
         }
     )
