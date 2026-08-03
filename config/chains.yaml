@@ -37,10 +37,10 @@ chains:
         interval_sec: 20
         window: 1m
     filters:
-      mc_min: 1000
+      mc_min: 10000
       mc_max: 50000
-      liquidity_min: 5000
-      top10_max: 0.30
+      liquidity_min: 8000
+      top10_max: 0.25
       holders_min: 100
       visiting_min: 200
       max_mc_extension: 2.0
