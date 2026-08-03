@@ -438,9 +438,9 @@ async def test_exit_mc_aligned_to_fill_mark_not_later_quote(tmp_path):
     await db.connect()
     client = FakeClient()
     notifier = FakeNotifier()
-    # Fill/evaluate at hard-stop mark 0.8; later display quote rebounds to 0.9 / 90K MC.
-    client.prices["hs"] = 0.8
-    client.exit_quote_prices["hs"] = 0.9
+    # Fill/evaluate at hard-stop mark 0.5 (−50%); later display quote rebounds to 0.6 / 90K MC.
+    client.prices["hs"] = 0.5
+    client.exit_quote_prices["hs"] = 0.6
     client.market_caps["hs"] = 90_000
     ex = PaperExecutor(
         db,
@@ -466,8 +466,8 @@ async def test_exit_mc_aligned_to_fill_mark_not_later_quote(tmp_path):
     assert len(notifier.events) == 1
     ev = notifier.events[0]
     assert ev.reason == "hard_stop"
-    assert abs(float(ev.exit_mc) - 80_000) < 1e-6  # 90K * (0.8/0.9)
-    assert abs(float(ev.entry_mc) - 100_000) < 1e-6  # 90K * (1.0/0.9)
+    assert abs(float(ev.exit_mc) - 75_000) < 1e-6  # 90K * (0.5/0.6)
+    assert abs(float(ev.entry_mc) - 150_000) < 1e-6  # 90K * (1.0/0.6)
     await db.close()
 
 

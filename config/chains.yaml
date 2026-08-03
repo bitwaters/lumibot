@@ -8,9 +8,9 @@ global:
 
 strategy:
   notional_usd: 20
-  hard_stop_pct: -0.20
+  hard_stop_pct: -0.50
   stage1_tp_pct: 0.30
-  trail_drawdown_pct: 0.30
+  trail_drawdown_pct: 0.50
   timeout_hours: 4
   snapshots_sec: [60, 300, 900, 3600]
   loss_cooldown_min: 180
