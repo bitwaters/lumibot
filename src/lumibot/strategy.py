@@ -28,6 +28,8 @@ class StrategyOrder:
     stage1_tp_pct: float = 0.25
     trail_drawdown_pct: float = 0.30
     timeout_hours: float = 2.0
+    stage1_sell_mode: str = "notional"  # notional | ratio
+    stage1_sell_ratio: float = 0.50     # used when stage1_sell_mode == "ratio"
 
     @staticmethod
     def buy_fill_price(mark: float, buy_slip: float) -> float:
@@ -52,6 +54,8 @@ class StrategyOrder:
         stage1_tp_pct: float = 0.25,
         trail_drawdown_pct: float = 0.30,
         timeout_hours: float = 2.0,
+        stage1_sell_mode: str = "notional",
+        stage1_sell_ratio: float = 0.50,
     ) -> StrategyOrder:
         entry = cls.buy_fill_price(mark, buy_slip)
         qty = notional_usd / entry
@@ -72,6 +76,8 @@ class StrategyOrder:
             stage1_tp_pct=stage1_tp_pct,
             trail_drawdown_pct=trail_drawdown_pct,
             timeout_hours=timeout_hours,
+            stage1_sell_mode=stage1_sell_mode,
+            stage1_sell_ratio=stage1_sell_ratio,
         )
 
     def note_mark(self, mark: float) -> None:
@@ -79,6 +85,10 @@ class StrategyOrder:
             self.peak_price = mark
 
     def stage1_sell_qty(self, mark: float) -> float:
+        if self.stage1_sell_mode == "ratio":
+            # Fixed ratio mode: sell a set percentage of current qty
+            return self.qty * self.stage1_sell_ratio
+        # Notional mode (default): sell enough to recover original notional
         sell_px = self.sell_fill_price(mark, self.sell_slip)
         if sell_px <= 0:
             return self.qty

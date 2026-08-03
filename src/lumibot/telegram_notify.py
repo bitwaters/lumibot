@@ -53,17 +53,20 @@ REASON_LABELS = {
     "trigger_mc": "触发市值",
     "liq": "流动性",
     "liq_missing": "流动性缺失",
+    "liq_ratio": "流动性占比",
     "top10": "Top10",
     "top10_missing": "Top10缺失",
     "holders": "持有人",
     "holders_missing": "持有人缺失",
     "visiting": "热度",
     "visiting_missing": "热度缺失",
+    "too_new": "过新",
+    "too_old": "过旧",
     "platform": "平台",
     "platform_missing": "平台缺失",
     "mc_extension": "市值扩张",
     "mc_extension_soft": "市值扩张(软)",
-    "loss_cooldown": "硬止损冷却",
+    "loss_cooldown": "亏损冷却",
     "post_close_cooldown": "平仓冷却",
     "cooldown": "告警冷却",
     "no_price": "无有效价格",
@@ -331,12 +334,25 @@ def render_rejects(rows: list) -> str:
     return "\n".join(lines)
 
 
-def render_status(*, enabled_chains: list[str], open_count: int, cooldowns: int, mode: str) -> str:
+def render_status(
+    *,
+    enabled_chains: list[str],
+    open_count: int,
+    cooldowns: int,
+    chain_modes: dict[str, str],
+) -> str:
+    chains_str = ", ".join(enabled_chains) or "—"
+    if len(chain_modes) == 1:
+        mode_str = next(iter(chain_modes.values()))
+    elif chain_modes:
+        mode_str = "  ".join(f"{k}:{v}" for k, v in chain_modes.items())
+    else:
+        mode_str = "paper"
     return "\n".join(
         [
             "🟢 运行中",
             "",
-            f"链 {', '.join(enabled_chains) or '—'}  ·  {mode}",
+            f"链 {chains_str}  ·  {mode_str}",
             f"持仓 {open_count}  ·  冷却 {cooldowns}",
         ]
     )
@@ -389,11 +405,13 @@ def render_help(app_cfg: AppConfig, *, enabled_chains: list[str] | None = None) 
             f"· 名义 {_usd_compact(s.notional_usd)}，滑点 {slip}",
             f"· 硬止损：相对开仓标记 {_pct(s.hard_stop_pct)}",
             (
-                f"· 回本 {_pct(s.stage1_tp_pct)} 减仓；剩余峰值回撤 "
-                f"{_pct(s.trail_drawdown_pct)} 平仓；超时 {format_duration(s.timeout_hours * 3600)}"
+                f"· 触发 {_pct(s.stage1_tp_pct)} 减仓 "
+                f"{'比例 ' + _pct(s.stage1_sell_ratio) if s.stage1_sell_mode == 'ratio' else '回本名义'}；"
+                f"剩余峰值回撤 {_pct(s.trail_drawdown_pct)} 平仓；"
+                f"超时 {format_duration(s.timeout_hours * 3600)}"
             ),
             (
-                f"· 硬止损后再入场 {format_duration(s.loss_cooldown_min * 60)}；"
+                f"· 亏损平仓后再入场 {format_duration(s.loss_cooldown_min * 60)}；"
                 f"普通平仓后再入场 {format_duration(s.post_close_cooldown_min * 60)}"
             ),
             "· 开仓/推送指标 = 过门后重拉的实时 token 快照（筛选用当时快照，不二次门控）",

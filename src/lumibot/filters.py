@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from lumibot.config import FiltersCfg
@@ -81,6 +82,21 @@ def apply_light_filters(
         return FilterResult(False, "visiting_missing")
     if cand.visiting_count < cfg.visiting_min:
         return FilterResult(False, "visiting")
+
+    # --- Age filter (requires open_timestamp from token_info) ---
+    if cand.open_timestamp is not None:
+        age_sec = time.time() - cand.open_timestamp
+        if cfg.age_min_sec > 0 and age_sec < cfg.age_min_sec:
+            return FilterResult(False, "too_new")
+        if cfg.age_max_sec > 0 and age_sec > cfg.age_max_sec:
+            return FilterResult(False, "too_old")
+
+    # --- Liquidity/MC ratio filter ---
+    if cfg.liquidity_ratio_min > 0 and cand.market_cap is not None and cand.market_cap > 0:
+        liq_ratio = (cand.liquidity or 0.0) / cand.market_cap
+        if liq_ratio < cfg.liquidity_ratio_min:
+            return FilterResult(False, "liq_ratio")
+
     return FilterResult(True)
 
 

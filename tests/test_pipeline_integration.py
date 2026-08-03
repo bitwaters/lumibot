@@ -221,7 +221,7 @@ async def test_push_card_uses_fresh_snapshot_not_gate_metrics(harness):
         "visiting_count": 400,
         "price": 2.0,
         "market_cap": 45_000,
-        "open_timestamp": 1_700_000_000,
+        "open_timestamp": int(time.time()) - 600,  # ~10 min old, within age filter window
         "stat": {"top_10_holder_rate": 0.15, "holder_count": 900},
     }
     await pipe._handle_signal(

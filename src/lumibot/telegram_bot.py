@@ -120,18 +120,18 @@ def build_dispatcher(
             return
         summary = await db.paper_stats_summary()
         cooldowns = await db.count_active_cooldowns()
-        mode = "paper"
+        # Collect mode per chain so /status is accurate with multiple chains enabled
+        chain_modes: dict[str, str] = {}
         for name in enabled_chains:
-            cfg = app_cfg.chains.get(name)
-            if cfg:
-                mode = cfg.execution.mode
-                break
+            chain_cfg = app_cfg.chains.get(name)
+            if chain_cfg:
+                chain_modes[name] = chain_cfg.execution.mode
         await message.answer(
             render_status(
                 enabled_chains=enabled_chains,
                 open_count=int(summary.get("open_count") or 0),
                 cooldowns=cooldowns,
-                mode=mode,
+                chain_modes=chain_modes,
             ),
             parse_mode=None,
         )

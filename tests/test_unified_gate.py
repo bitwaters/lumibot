@@ -218,9 +218,11 @@ async def test_acquire_recheck_releases_on_loss(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_soft_extension_allows_open(tmp_path):
+async def test_enforce_extension_rejects(tmp_path):
+    """With enforce_mc_extension=True, tokens where mc has extended beyond the limit
+    are rejected outright rather than allowed through with a soft bump."""
     app = load_app_config("config/chains.yaml")
-    assert app.chains["sol"].filters.enforce_mc_extension is False
+    assert app.chains["sol"].filters.enforce_mc_extension is True
     db = Database(str(tmp_path / "t.db"))
     await db.connect()
     client = FakeClient()
@@ -236,15 +238,16 @@ async def test_soft_extension_allows_open(tmp_path):
             "address": "ext",
             "signal_type": 12,
             "market_cap": 45_000,
-            "trigger_mc": 20_000,
+            "trigger_mc": 20_000,  # ratio = 2.25x > max_mc_extension=2.0 → rejected
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
         }
     )
-    assert len(notifier.sent) == 1
+    # enforce=True means hard reject: no open, no TG notification
+    assert len(notifier.sent) == 0
     cur = await db.conn.execute(
-        "SELECT count FROM reject_counts WHERE reason='mc_extension_soft'"
+        "SELECT count FROM reject_counts WHERE reason='mc_extension'"
     )
     row = await cur.fetchone()
     assert row is not None and int(row["count"]) >= 1

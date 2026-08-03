@@ -92,6 +92,10 @@ CREATE TABLE IF NOT EXISTS paper_skip_opens (
   token TEXT NOT NULL,
   created_at REAL NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_cooldowns_token ON cooldowns(chain, token, until_ts);
+CREATE INDEX IF NOT EXISTS idx_paper_status ON paper_positions(chain, status);
+CREATE INDEX IF NOT EXISTS idx_snapshots_pos ON snapshots(position_id);
 """
 
 
@@ -478,7 +482,7 @@ class Database:
                     """,
                     (chain, token, "post_close", now + post_close_cooldown_min * 60),
                 )
-            if reason == "hard_stop" and loss_cooldown_min > 0:
+            if realized_pnl < 0 and loss_cooldown_min > 0:
                 await self.conn.execute(
                     """
                     INSERT INTO cooldowns(chain, token, kind, until_ts) VALUES(?,?,?,?)

@@ -10,6 +10,8 @@ strategy:
   notional_usd: 20
   hard_stop_pct: -0.30
   stage1_tp_pct: 0.25
+  stage1_sell_mode: ratio   # ratio | notional; ratio sells a fixed fraction
+  stage1_sell_ratio: 0.50   # sell 50% of qty at stage1; trail the remaining 50%
   trail_drawdown_pct: 0.30
   timeout_hours: 2
   snapshots_sec: [60, 300, 900, 3600]
@@ -40,11 +42,14 @@ chains:
       mc_min: 10000
       mc_max: 50000
       liquidity_min: 8000
+      liquidity_ratio_min: 0.15  # liq/mc >= 15%; prevents shallow-pool tokens
       top10_max: 0.25
       holders_min: 100
       visiting_min: 200
+      age_min_sec: 120    # reject tokens < 2 min old (dev dump risk)
+      age_max_sec: 7200   # reject tokens > 2 h old (momentum likely gone); 0 = disabled
       max_mc_extension: 2.0
-      enforce_mc_extension: false
+      enforce_mc_extension: true
     safety:
       rug_max: 0.3
       bundler_max: 0.3
@@ -86,11 +91,14 @@ chains:
       mc_min: 1000
       mc_max: 50000
       liquidity_min: 5000
+      liquidity_ratio_min: 0.15
       top10_max: 0.30
       holders_min: 100
       visiting_min: 80
+      age_min_sec: 120
+      age_max_sec: 7200
       max_mc_extension: 2.0
-      enforce_mc_extension: false
+      enforce_mc_extension: true
     safety:
       rug_max: 0.3
       bundler_max: 0.3
@@ -132,11 +140,14 @@ chains:
       mc_min: 1000
       mc_max: 50000
       liquidity_min: 5000
+      liquidity_ratio_min: 0.15
       top10_max: 0.30
       holders_min: 80
       visiting_min: 50
+      age_min_sec: 120
+      age_max_sec: 7200
       max_mc_extension: 2.0
-      enforce_mc_extension: false
+      enforce_mc_extension: true
     safety:
       rug_max: 0.3
       bundler_max: 0.3

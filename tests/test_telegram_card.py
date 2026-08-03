@@ -209,7 +209,10 @@ def test_positions_price_fallback_when_mc_missing():
 
 def test_reject_labels():
     assert reject_reason_label("mc") == "市值"
-    assert reject_reason_label("loss_cooldown") == "硬止损冷却"
+    assert reject_reason_label("loss_cooldown") == "亏损冷却"
+    assert reject_reason_label("too_new") == "过新"
+    assert reject_reason_label("liq_ratio") == "流动性占比"
+
     assert reject_reason_label("no_price") == "无有效价格"
     assert reject_source_label("signal") == "信号"
     text = render_rejects(

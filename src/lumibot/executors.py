@@ -63,6 +63,8 @@ class PaperExecutor(Executor):
             stage1_tp_pct=self.strategy.stage1_tp_pct,
             trail_drawdown_pct=self.strategy.trail_drawdown_pct,
             timeout_hours=self.strategy.timeout_hours,
+            stage1_sell_mode=self.strategy.stage1_sell_mode,
+            stage1_sell_ratio=self.strategy.stage1_sell_ratio,
         )
         pos_id = await self.db.try_open_paper(
             cand.chain,
@@ -147,6 +149,8 @@ class PaperExecutor(Executor):
             stage1_tp_pct=self.strategy.stage1_tp_pct,
             trail_drawdown_pct=self.strategy.trail_drawdown_pct,
             timeout_hours=self.strategy.timeout_hours,
+            stage1_sell_mode=self.strategy.stage1_sell_mode,
+            stage1_sell_ratio=self.strategy.stage1_sell_ratio,
         )
         action, reason, sell_qty = order.evaluate(mark, now)
         if order.peak_price != row["peak_price"]:

@@ -42,9 +42,12 @@ class FiltersCfg(BaseModel):
     mc_min: float
     mc_max: float
     liquidity_min: float
+    liquidity_ratio_min: float = 0.0   # liq/mc ratio; 0 = disabled
     top10_max: float
     holders_min: float
     visiting_min: float
+    age_min_sec: int = 0    # reject tokens younger than this; 0 = disabled
+    age_max_sec: int = 0    # reject tokens older than this; 0 = disabled
     max_mc_extension: float = 2.0
     enforce_mc_extension: bool = False
 
@@ -115,6 +118,8 @@ class StrategyCfg(BaseModel):
     stage1_tp_pct: float = 0.25
     trail_drawdown_pct: float = 0.30
     timeout_hours: float = 2
+    stage1_sell_mode: str = "notional"  # notional | ratio
+    stage1_sell_ratio: float = 0.50     # used when stage1_sell_mode == "ratio"
     snapshots_sec: list[int] = Field(default_factory=lambda: [60, 300, 900, 3600])
     loss_cooldown_min: int = 180
     post_close_cooldown_min: int = 45
