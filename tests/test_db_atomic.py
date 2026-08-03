@@ -31,6 +31,9 @@ async def test_paper_open_atomic_skip_second(tmp_path):
     )
     opened = [x for x in r if x is not None]
     assert len(opened) == 1
+    summary = await db.paper_stats_summary()
+    assert summary["opened_count"] == 1
+    assert summary["skipped_open_count"] == 1
     await db.close()
 
 

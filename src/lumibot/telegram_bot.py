@@ -14,6 +14,8 @@ from lumibot.telegram_notify import (
     render_help,
     render_positions,
     render_rejects,
+    render_reset_paper,
+    render_reset_paper_hint,
     render_stats,
     render_status,
     render_unknown_command,
@@ -29,6 +31,7 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand(command="rejects", description="筛选拦截原因"),
     BotCommand(command="alerts", description="最近告警"),
     BotCommand(command="status", description="运行状态"),
+    BotCommand(command="reset_paper", description="清空本轮模拟（需 confirm）"),
 ]
 
 
@@ -59,13 +62,17 @@ def build_dispatcher(
     async def cmd_start(message: Message) -> None:
         if not _authorized(message):
             return
-        await message.answer(render_help(), parse_mode=None)
+        await message.answer(
+            render_help(app_cfg, enabled_chains=enabled_chains), parse_mode=None
+        )
 
     @router.message(Command("help"))
     async def cmd_help(message: Message) -> None:
         if not _authorized(message):
             return
-        await message.answer(render_help(), parse_mode=None)
+        await message.answer(
+            render_help(app_cfg, enabled_chains=enabled_chains), parse_mode=None
+        )
 
     @router.message(Command("positions"))
     async def cmd_positions(message: Message) -> None:
@@ -128,6 +135,18 @@ def build_dispatcher(
             ),
             parse_mode=None,
         )
+
+    @router.message(Command("reset_paper"))
+    async def cmd_reset_paper(message: Message) -> None:
+        if not _authorized(message):
+            return
+        parts = (message.text or "").split()
+        if len(parts) < 2 or parts[1].lower() != "confirm":
+            await message.answer(render_reset_paper_hint(), parse_mode=None)
+            return
+        deleted = await db.reset_paper_experiment()
+        logger.info("paper experiment reset by chat_id=%s deleted=%s", message.chat.id, deleted)
+        await message.answer(render_reset_paper(deleted), parse_mode=None)
 
     @router.message(F.text)
     async def fallback(message: Message) -> None:

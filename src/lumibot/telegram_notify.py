@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from lumibot.config import AppConfig
 from lumibot.exec_types import ExecResult, PaperTradeEvent
 from lumibot.models import Source, TokenCandidate
 
@@ -266,12 +267,19 @@ def _mc_from_price_ratio(
 
 
 def render_stats(summary: dict, recent_closed: list) -> str:
+    closed = int(summary.get("closed_count") or 0)
+    hard_stops = int(summary.get("hard_stop_count") or 0)
+    if closed > 0:
+        hs_line = f"硬止损 {hard_stops}/{closed}  ·  {_pct(hard_stops / closed)}"
+    else:
+        hs_line = "硬止损 —（尚无平仓）"
     lines = [
         "📊 模拟统计",
         "",
         f"持仓 {summary.get('open_count', 0)}  ·  名义 {_usd_compact(summary.get('open_notional'))}",
-        f"已平 {summary.get('closed_count', 0)}  ·  已实现 {_pnl(float(summary.get('closed_pnl') or 0))}",
-        f"新开 {summary.get('opened_count', 0)}  ·  跳过 {summary.get('skipped_open_count', 0)}",
+        f"已平 {closed}  ·  已实现 {_pnl(float(summary.get('closed_pnl') or 0))}",
+        f"本轮开仓 {summary.get('opened_count', 0)}  ·  跳过开仓 {summary.get('skipped_open_count', 0)}",
+        hs_line,
         "",
     ]
     if recent_closed:
@@ -282,7 +290,34 @@ def render_stats(summary: dict, recent_closed: list) -> str:
             lines.append(f"· ${sym} {reason} {_pnl(float(row['realized_pnl'] or 0))}")
     else:
         lines.append("暂无平仓记录。")
+    lines.extend(["", "用 /reset_paper confirm 清空本轮模拟（持仓/告警/拦截/冷却）"])
     return "\n".join(lines)
+
+
+def render_reset_paper_hint() -> str:
+    return "\n".join(
+        [
+            "⚠️ 将清空本轮模拟",
+            "",
+            "持仓 / 成交 / 快照 / 冷却 / 告警 / 拦截统计都会删除。",
+            "确认请发送：",
+            "/reset_paper confirm",
+        ]
+    )
+
+
+def render_reset_paper(deleted: dict[str, int]) -> str:
+    return "\n".join(
+        [
+            "🧹 本轮模拟已重置",
+            "",
+            f"仓位行 {deleted.get('paper_positions', 0)}  ·  成交 {deleted.get('paper_fills', 0)}",
+            f"跳过开仓 {deleted.get('paper_skip_opens', 0)}  ·  快照 {deleted.get('snapshots', 0)}",
+            f"冷却 {deleted.get('cooldowns', 0)}  ·  告警 {deleted.get('alerts', 0)}  ·  拦截 {deleted.get('reject_counts', 0)}",
+            "",
+            "用 /stats 查看新一轮统计。",
+        ]
+    )
 
 
 def render_rejects(rows: list) -> str:
@@ -331,21 +366,39 @@ def render_alerts(rows: list) -> str:
     return "\n".join(lines)
 
 
-def render_help() -> str:
+def render_help(app_cfg: AppConfig, *, enabled_chains: list[str] | None = None) -> str:
+    s = app_cfg.strategy
+    chains = enabled_chains or [n for n, c in app_cfg.chains.items() if c.enabled]
+    slip = "按链"
+    for name in chains:
+        cfg = app_cfg.chains.get(name)
+        if cfg is not None:
+            slip = (
+                f"买 {_pct(cfg.execution.slippage_buy_pct)} / "
+                f"卖 {_pct(cfg.execution.slippage_sell_pct)}（{name}）"
+            )
+            break
     return "\n".join(
         [
             "📖 LumiBot",
             "",
             "推送：过门后信号推送 + 模拟开仓",
-            "命令：/positions /stats /rejects /alerts /status",
+            "命令：/positions /stats /rejects /alerts /status /reset_paper",
             "",
             "规则",
-            "· 名义 $20，买卖滑点按链",
-            "· 硬止损：相对开仓标记 -30%",
-            "· 回本 +25% 减仓；剩余峰值回撤 30% 平仓；超时 2h",
-            "· 硬止损后再入场 3h；普通平仓后再入场 45m",
+            f"· 名义 {_usd_compact(s.notional_usd)}，滑点 {slip}",
+            f"· 硬止损：相对开仓标记 {_pct(s.hard_stop_pct)}",
+            (
+                f"· 回本 {_pct(s.stage1_tp_pct)} 减仓；剩余峰值回撤 "
+                f"{_pct(s.trail_drawdown_pct)} 平仓；超时 {format_duration(s.timeout_hours * 3600)}"
+            ),
+            (
+                f"· 硬止损后再入场 {format_duration(s.loss_cooldown_min * 60)}；"
+                f"普通平仓后再入场 {format_duration(s.post_close_cooldown_min * 60)}"
+            ),
             "· 开仓/推送指标 = 过门后重拉的实时 token 快照（筛选用当时快照，不二次门控）",
             "· ⏱ 延迟 = 本机见到该条 → 发出前的处理耗时（含过门重拉；不含轮询等待）",
+            "· /reset_paper confirm 清空本轮模拟统计（持仓/告警/拦截/冷却）",
         ]
     )
 

@@ -1,5 +1,6 @@
 import time
 
+from lumibot.config import load_app_config
 from lumibot.exec_types import ExecResult, PaperTradeEvent
 from lumibot.models import NormalizedSafety, Source, TokenCandidate
 from lumibot.telegram_bot import BOT_COMMANDS
@@ -13,6 +14,7 @@ from lumibot.telegram_notify import (
     render_paper_event,
     render_positions,
     render_rejects,
+    render_reset_paper_hint,
     render_stats,
 )
 
@@ -130,10 +132,17 @@ def test_paper_stage1_event_uses_mc():
 
 
 def test_help_and_positions_cards():
-    help_text = render_help()
+    from lumibot.telegram_notify import _pct
+
+    app = load_app_config("config/chains.yaml")
+    help_text = render_help(app, enabled_chains=["sol"])
     assert "/stats" in help_text
+    assert "/reset_paper" in help_text
     assert "过门后重拉" in help_text or "过门后重取" in help_text
     assert "⏱ 延迟" in help_text
+    assert _pct(app.strategy.hard_stop_pct) in help_text
+    assert _pct(app.strategy.stage1_tp_pct) in help_text
+    assert _pct(app.strategy.trail_drawdown_pct) in help_text
     assert "📋 持仓 0 笔" in render_positions([])
     summary = {
         "open_count": 1,
@@ -142,10 +151,16 @@ def test_help_and_positions_cards():
         "open_notional": 20.0,
         "opened_count": 5,
         "skipped_open_count": 2,
+        "hard_stop_count": 1,
     }
     text = render_stats(summary, [])
     assert "📊 模拟统计" in text
-    assert "新开 5  ·  跳过 2" in text
+    assert "本轮开仓 5  ·  跳过开仓 2" in text
+    assert "硬止损 1/2" in text
+    assert "/reset_paper confirm" in text
+    hint = render_reset_paper_hint()
+    assert "/reset_paper confirm" in hint
+    assert "将清空" in hint
 
 
 def test_positions_use_market_cap_not_price():
@@ -213,5 +228,6 @@ def test_bot_quick_commands():
         "rejects",
         "alerts",
         "status",
+        "reset_paper",
     ]
     assert all(c.description for c in BOT_COMMANDS)

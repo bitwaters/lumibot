@@ -156,7 +156,7 @@ class PaperExecutor(Executor):
         if action == Action.STAGE1_SELL:
             sell_px = StrategyOrder.sell_fill_price(mark, order.sell_slip)
             pnl = order.apply_stage1(mark, sell_qty)
-            await self.db.add_partial_sell(
+            sold = await self.db.add_partial_sell(
                 row["id"],
                 sell_px,
                 sell_qty,
@@ -165,6 +165,8 @@ class PaperExecutor(Executor):
                 order.cost_basis,
                 pnl,
             )
+            if not sold:
+                return
             logger.info(
                 "paper_stage1 chain=%s token=%s reason=%s pnl=%.4f",
                 row["chain"],
@@ -203,7 +205,7 @@ class PaperExecutor(Executor):
         elif action == Action.CLOSE:
             sell_px = StrategyOrder.sell_fill_price(mark, order.sell_slip)
             pnl = order.apply_close(mark, sell_qty)
-            await self.db.close_paper(
+            closed_ok = await self.db.close_paper(
                 row["id"],
                 sell_px,
                 sell_qty,
@@ -213,6 +215,8 @@ class PaperExecutor(Executor):
                 loss_cooldown_min=self.strategy.loss_cooldown_min,
                 post_close_cooldown_min=self.strategy.post_close_cooldown_min,
             )
+            if not closed_ok:
+                return
             logger.info(
                 "paper_closed chain=%s token=%s reason=%s pnl=%.4f",
                 row["chain"],

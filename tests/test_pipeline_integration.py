@@ -364,6 +364,9 @@ async def test_paper_skip_second_open_still_alerts(harness):
     assert len(notifier.sent) == 2
     opens = await db.list_open_papers("sol")
     assert len(opens) == 1
+    summary = await db.paper_stats_summary()
+    assert summary["opened_count"] == 1
+    assert summary["skipped_open_count"] == 1
 
 
 @pytest.mark.asyncio

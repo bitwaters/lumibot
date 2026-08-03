@@ -85,6 +85,13 @@ CREATE TABLE IF NOT EXISTS reject_counts (
   count INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (chain, source, reason)
 );
+
+CREATE TABLE IF NOT EXISTS paper_skip_opens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chain TEXT NOT NULL,
+  token TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
 """
 
 
@@ -305,6 +312,11 @@ class Database:
                 )
                 existing = await cur.fetchone()
                 if existing:
+                    # Same write path as the open decision — not dependent on alerts/TG.
+                    await self.conn.execute(
+                        "INSERT INTO paper_skip_opens(chain, token, created_at) VALUES(?,?,?)",
+                        (chain, token, now),
+                    )
                     await self.conn.commit()
                     return None
                 cur = await self.conn.execute(
@@ -433,20 +445,23 @@ class Database:
         *,
         loss_cooldown_min: int = 0,
         post_close_cooldown_min: int = 0,
-    ) -> None:
+    ) -> bool:
+        """Close an open position. Returns False if missing/already closed (e.g. after reset)."""
         now = time.time()
 
-        async def _tx() -> None:
+        async def _tx() -> bool:
             cur = await self.conn.execute(
-                "SELECT chain, token FROM paper_positions WHERE id=?",
+                "SELECT chain, token FROM paper_positions WHERE id=? AND status='open'",
                 (position_id,),
             )
             pos = await cur.fetchone()
+            if pos is None:
+                return False
             await self.conn.execute(
                 """
                 UPDATE paper_positions
                 SET status='closed', qty=0, closed_at=?, close_reason=?, realized_pnl=realized_pnl+?
-                WHERE id=?
+                WHERE id=? AND status='open'
                 """,
                 (now, reason, realized_pnl, position_id),
             )
@@ -454,27 +469,27 @@ class Database:
                 "INSERT INTO paper_fills(position_id, side, price, qty, notional_usd, created_at) VALUES(?,?,?,?,?,?)",
                 (position_id, "sell", price, qty, notional_usd, now),
             )
-            if pos is not None:
-                chain, token = pos["chain"], pos["token"]
-                if post_close_cooldown_min > 0:
-                    await self.conn.execute(
-                        """
-                        INSERT INTO cooldowns(chain, token, kind, until_ts) VALUES(?,?,?,?)
-                        ON CONFLICT(chain, token, kind) DO UPDATE SET until_ts=excluded.until_ts
-                        """,
-                        (chain, token, "post_close", now + post_close_cooldown_min * 60),
-                    )
-                if reason == "hard_stop" and loss_cooldown_min > 0:
-                    await self.conn.execute(
-                        """
-                        INSERT INTO cooldowns(chain, token, kind, until_ts) VALUES(?,?,?,?)
-                        ON CONFLICT(chain, token, kind) DO UPDATE SET until_ts=excluded.until_ts
-                        """,
-                        (chain, token, "loss", now + loss_cooldown_min * 60),
-                    )
+            chain, token = pos["chain"], pos["token"]
+            if post_close_cooldown_min > 0:
+                await self.conn.execute(
+                    """
+                    INSERT INTO cooldowns(chain, token, kind, until_ts) VALUES(?,?,?,?)
+                    ON CONFLICT(chain, token, kind) DO UPDATE SET until_ts=excluded.until_ts
+                    """,
+                    (chain, token, "post_close", now + post_close_cooldown_min * 60),
+                )
+            if reason == "hard_stop" and loss_cooldown_min > 0:
+                await self.conn.execute(
+                    """
+                    INSERT INTO cooldowns(chain, token, kind, until_ts) VALUES(?,?,?,?)
+                    ON CONFLICT(chain, token, kind) DO UPDATE SET until_ts=excluded.until_ts
+                    """,
+                    (chain, token, "loss", now + loss_cooldown_min * 60),
+                )
             await self.conn.commit()
+            return True
 
-        await self._with_write(_tx)
+        return await self._with_write(_tx)
 
     async def abort_paper_open(self, position_id: int) -> None:
         """Void a just-opened position without arming loss/post_close cooldowns."""
@@ -499,15 +514,22 @@ class Database:
         remaining_qty: float,
         new_cost_basis: float,
         realized_pnl: float,
-    ) -> None:
+    ) -> bool:
+        """Stage1 partial sell. Returns False if position missing/not open."""
         now = time.time()
 
-        async def _tx() -> None:
+        async def _tx() -> bool:
+            cur = await self.conn.execute(
+                "SELECT id FROM paper_positions WHERE id=? AND status='open'",
+                (position_id,),
+            )
+            if await cur.fetchone() is None:
+                return False
             await self.conn.execute(
                 """
                 UPDATE paper_positions
                 SET qty=?, cost_basis=?, stage1_done=1, realized_pnl=realized_pnl+?
-                WHERE id=?
+                WHERE id=? AND status='open'
                 """,
                 (remaining_qty, new_cost_basis, realized_pnl, position_id),
             )
@@ -516,13 +538,20 @@ class Database:
                 (position_id, "sell", price, qty, notional_usd, now),
             )
             await self.conn.commit()
+            return True
 
-        await self._with_write(_tx)
+        return await self._with_write(_tx)
 
     async def insert_snapshot(
         self, position_id: int, offset_sec: int, price: float, position_closed: bool
     ) -> None:
         async def _tx() -> None:
+            cur = await self.conn.execute(
+                "SELECT id FROM paper_positions WHERE id=?",
+                (position_id,),
+            )
+            if await cur.fetchone() is None:
+                return
             await self.conn.execute(
                 """
                 INSERT OR IGNORE INTO snapshots(position_id, offset_sec, price, position_closed, created_at)
@@ -554,45 +583,61 @@ class Database:
         return list(await cur.fetchall())
 
     async def paper_stats_summary(self) -> dict[str, Any]:
+        """Current-experiment stats from paper tables only (not alerts)."""
         cur = await self.conn.execute(
             """
             SELECT
               COALESCE(SUM(CASE WHEN status='open' THEN 1 ELSE 0 END), 0) AS open_count,
               COALESCE(SUM(CASE WHEN status='closed' THEN 1 ELSE 0 END), 0) AS closed_count,
               COALESCE(SUM(CASE WHEN status='closed' THEN realized_pnl ELSE 0 END), 0) AS closed_pnl,
-              COALESCE(SUM(CASE WHEN status='open' THEN notional_usd ELSE 0 END), 0) AS open_notional
+              COALESCE(SUM(CASE WHEN status='open' THEN notional_usd ELSE 0 END), 0) AS open_notional,
+              COALESCE(COUNT(*), 0) AS opened_count,
+              COALESCE(SUM(CASE WHEN status='closed' AND close_reason='hard_stop' THEN 1 ELSE 0 END), 0)
+                AS hard_stop_count
             FROM paper_positions
             """
         )
         row = await cur.fetchone()
-        alert_cur = await self.conn.execute(
-            """
-            SELECT
-              COALESCE(SUM(CASE WHEN json_extract(payload_json, '$.exec_status')='opened' THEN 1 ELSE 0 END), 0)
-                AS opened_count,
-              COALESCE(SUM(CASE WHEN json_extract(payload_json, '$.exec_status')='skipped_open' THEN 1 ELSE 0 END), 0)
-                AS skipped_open_count
-            FROM alerts
-            """
+        skip_cur = await self.conn.execute(
+            "SELECT COALESCE(COUNT(*), 0) AS skipped_open_count FROM paper_skip_opens"
         )
-        alert_row = await alert_cur.fetchone()
-        if not row:
-            return {
-                "open_count": 0,
-                "closed_count": 0,
-                "closed_pnl": 0.0,
-                "open_notional": 0.0,
-                "opened_count": int(alert_row["opened_count"] if alert_row else 0),
-                "skipped_open_count": int(alert_row["skipped_open_count"] if alert_row else 0),
-            }
+        skip_row = await skip_cur.fetchone()
         return {
-            "open_count": int(row["open_count"] or 0),
-            "closed_count": int(row["closed_count"] or 0),
-            "closed_pnl": float(row["closed_pnl"] or 0),
-            "open_notional": float(row["open_notional"] or 0),
-            "opened_count": int(alert_row["opened_count"] if alert_row else 0),
-            "skipped_open_count": int(alert_row["skipped_open_count"] if alert_row else 0),
+            "open_count": int(row["open_count"] if row else 0),
+            "closed_count": int(row["closed_count"] if row else 0),
+            "closed_pnl": float(row["closed_pnl"] if row else 0),
+            "open_notional": float(row["open_notional"] if row else 0),
+            "opened_count": int(row["opened_count"] if row else 0),
+            "skipped_open_count": int(skip_row["skipped_open_count"] if skip_row else 0),
+            "hard_stop_count": int(row["hard_stop_count"] if row else 0),
         }
+
+    async def reset_paper_experiment(self) -> dict[str, int]:
+        """Clear paper state + alerts/rejects/cooldowns for a fresh simulation cohort."""
+        tables = (
+            "paper_fills",
+            "snapshots",
+            "paper_positions",
+            "paper_skip_opens",
+            "cooldowns",
+            "alerts",
+            "reject_counts",
+        )
+
+        async def _run() -> dict[str, int]:
+            out: dict[str, int] = {}
+            await self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                for table in tables:
+                    cur = await self.conn.execute(f"DELETE FROM {table}")
+                    out[table] = int(cur.rowcount or 0)
+                await self.conn.commit()
+            except Exception:
+                await self.conn.rollback()
+                raise
+            return out
+
+        return await self._with_write(_run)
 
     async def top_reject_reasons(self, limit: int = 15) -> list[aiosqlite.Row]:
         cur = await self.conn.execute(
