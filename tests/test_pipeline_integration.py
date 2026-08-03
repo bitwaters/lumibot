@@ -46,7 +46,7 @@ class FakeClient:
         if address in self.market_caps:
             mc = self.market_caps[address]
         else:
-            mc = 100_000
+            mc = 40_000
         info = dict(self.info.get(address, {}))
         if "price" not in info:
             info["price"] = price
@@ -86,7 +86,7 @@ def _sol_cfg():
 def _pass_info() -> dict[str, Any]:
     return {
         "symbol": "TEST",
-        "market_cap": 100_000,
+        "market_cap": 40_000,
         "liquidity": 20_000,
         "top10_rate": 0.2,
         "holder_count": 200,
@@ -127,8 +127,8 @@ async def test_reject_before_telegram(harness):
         {
             "address": "bad",
             "signal_type": 12,
-            "market_cap": 100_000,
-            "trigger_mc": 100_000,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
@@ -151,8 +151,8 @@ async def test_signal_visiting_missing_from_info_rejects(harness):
         {
             "address": "tok",
             "signal_type": 12,
-            "market_cap": 100_000,
-            "trigger_mc": 100_000,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
@@ -166,17 +166,17 @@ async def test_signal_visiting_missing_from_info_rejects(harness):
 async def test_happy_path_alerts_and_opens_paper(harness):
     pipe, client, notifier, db, app = harness
     # Enrich snapshot uses stale price/mc; post-gate quote must win for open + card MC.
-    client.info["good"] = {**_pass_info(), "price": 1.0, "market_cap": 100_000}
+    client.info["good"] = {**_pass_info(), "price": 1.0, "market_cap": 40_000}
     client.security["good"] = _pass_security_sol()
     client.prices["good"] = 2.5
-    client.market_caps["good"] = 250_000
+    client.market_caps["good"] = 45_000
     await pipe._handle_signal(
         {
             "address": "good",
             "signal_type": 12,
             "symbol": "GOOD",
-            "market_cap": 100_000,
-            "trigger_mc": 120_000,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
@@ -196,7 +196,7 @@ async def test_happy_path_alerts_and_opens_paper(harness):
     card = notifier.cards[0]
     assert "📡 [SOL] 信号推送" in card
     assert "✅ 已开仓" in card
-    assert "$250.0K" in card  # fresh quote MC on card, not gate 100K
+    assert "$45.0K" in card  # fresh quote MC on card, not gate snapshot
     cur = await db.conn.execute("SELECT payload_json FROM alerts ORDER BY id DESC LIMIT 1")
     alert = await cur.fetchone()
     assert alert is not None
@@ -212,7 +212,7 @@ async def test_push_card_uses_fresh_snapshot_not_gate_metrics(harness):
     pipe, client, notifier, db, _app = harness
     client.security["fresh"] = _pass_security_sol()
     client.prices["fresh"] = 2.0
-    client.market_caps["fresh"] = 220_000
+    client.market_caps["fresh"] = 45_000
     # Gate uses signal payload metrics; info supplies visiting + post-gate card fields.
     client.info["fresh"] = {
         "symbol": "LIVE",
@@ -220,7 +220,7 @@ async def test_push_card_uses_fresh_snapshot_not_gate_metrics(harness):
         "holder_count": 900,
         "visiting_count": 400,
         "price": 2.0,
-        "market_cap": 220_000,
+        "market_cap": 45_000,
         "open_timestamp": 1_700_000_000,
         "stat": {"top_10_holder_rate": 0.15, "holder_count": 900},
     }
@@ -229,8 +229,8 @@ async def test_push_card_uses_fresh_snapshot_not_gate_metrics(harness):
             "address": "fresh",
             "signal_type": 12,
             "symbol": "OLD",
-            "market_cap": 100_000,
-            "trigger_mc": 100_000,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
@@ -239,7 +239,7 @@ async def test_push_card_uses_fresh_snapshot_not_gate_metrics(harness):
     )
     assert notifier.paper_status == ["opened"]
     card = notifier.cards[0]
-    assert "$220.0K" in card
+    assert "$45.0K" in card
     assert "$55.0K" in card
     assert "900" in card
     assert "400" in card
@@ -262,8 +262,8 @@ async def test_fresh_quote_mc_outside_filter_still_opens(harness):
         {
             "address": "wide",
             "signal_type": 12,
-            "market_cap": 100_000,
-            "trigger_mc": 100_000,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
@@ -282,7 +282,7 @@ async def test_safety_reject_no_alert(harness):
     await pipe._handle_trending(
         {
             "address": "rug",
-            "market_cap": 100_000,
+            "market_cap": 40_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
@@ -303,8 +303,8 @@ async def test_tg_failure_releases_cooldown(harness):
         {
             "address": "x",
             "signal_type": 12,
-            "market_cap": 100_000,
-            "trigger_mc": 100_000,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
@@ -319,8 +319,8 @@ async def test_tg_failure_releases_cooldown(harness):
         {
             "address": "x",
             "signal_type": 12,
-            "market_cap": 100_000,
-            "trigger_mc": 100_000,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
@@ -341,8 +341,8 @@ async def test_paper_skip_second_open_still_alerts(harness):
     raw = {
         "address": "dup",
         "signal_type": 12,
-        "market_cap": 100_000,
-        "trigger_mc": 100_000,
+        "market_cap": 40_000,
+        "trigger_mc": 40_000,
         "liquidity": 20_000,
         "top10_rate": 0.2,
         "holder_count": 200,
@@ -353,7 +353,7 @@ async def test_paper_skip_second_open_still_alerts(harness):
     await pipe._handle_trending(
         {
             "address": "dup",
-            "market_cap": 100_000,
+            "market_cap": 40_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
@@ -376,8 +376,8 @@ async def test_post_gate_quote_failure_no_push(harness):
         {
             "address": "np",
             "signal_type": 12,
-            "market_cap": 100_000,
-            "trigger_mc": 100_000,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
@@ -397,8 +397,8 @@ async def test_post_gate_quote_failure_no_push(harness):
         {
             "address": "np",
             "signal_type": 12,
-            "market_cap": 100_000,
-            "trigger_mc": 100_000,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
@@ -418,8 +418,8 @@ async def test_fresh_quote_without_mc_clears_card_mc(harness):
         {
             "address": "nomc",
             "signal_type": 12,
-            "market_cap": 100_000,
-            "trigger_mc": 100_000,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,

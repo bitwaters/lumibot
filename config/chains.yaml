@@ -37,8 +37,8 @@ chains:
         interval_sec: 20
         window: 1m
     filters:
-      mc_min: 50000
-      mc_max: 2000000
+      mc_min: 1000
+      mc_max: 50000
       liquidity_min: 10000
       top10_max: 0.30
       holders_min: 100
@@ -83,8 +83,8 @@ chains:
         interval_sec: 30
         window: 1m
     filters:
-      mc_min: 50000
-      mc_max: 2000000
+      mc_min: 1000
+      mc_max: 50000
       liquidity_min: 10000
       top10_max: 0.30
       holders_min: 100
@@ -129,8 +129,8 @@ chains:
         interval_sec: 30
         window: 1m
     filters:
-      mc_min: 30000
-      mc_max: 2000000
+      mc_min: 1000
+      mc_max: 50000
       liquidity_min: 8000
       top10_max: 0.30
       holders_min: 80

@@ -4,8 +4,8 @@ from lumibot.models import Source, TokenCandidate
 
 
 SOL = FiltersCfg(
-    mc_min=50_000,
-    mc_max=2_000_000,
+    mc_min=1_000,
+    mc_max=50_000,
     liquidity_min=10_000,
     top10_max=0.30,
     holders_min=100,
@@ -18,7 +18,7 @@ def _cand(platform: str | None = "pump") -> TokenCandidate:
         chain="sol",
         address="T",
         source=Source.TRENDING,
-        market_cap=100_000,
+        market_cap=40_000,
         liquidity=20_000,
         top10_rate=0.2,
         holder_count=200,

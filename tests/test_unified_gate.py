@@ -27,8 +27,8 @@ def test_mc_extension_soft_vs_enforce():
         address="t",
         source=Source.SIGNAL,
         signal_type=12,
-        market_cap=250_000,
-        trigger_mc=100_000,
+        market_cap=45_000,
+        trigger_mc=20_000,
     )
     soft_cfg = FiltersCfg(
         mc_min=1,
@@ -70,8 +70,8 @@ async def test_loss_row_blocks_admission(tmp_path):
         {
             "address": "blocked",
             "signal_type": 12,
-            "market_cap": 100_000,
-            "trigger_mc": 100_000,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
@@ -199,8 +199,8 @@ async def test_acquire_recheck_releases_on_loss(tmp_path):
         {
             "address": "race",
             "signal_type": 12,
-            "market_cap": 100_000,
-            "trigger_mc": 100_000,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
@@ -225,7 +225,7 @@ async def test_soft_extension_allows_open(tmp_path):
     await db.connect()
     client = FakeClient()
     info = _pass_info()
-    info["market_cap"] = 250_000
+    info["market_cap"] = 45_000
     client.info["ext"] = info
     client.security["ext"] = _pass_security_sol()
     client.prices["ext"] = 1.0
@@ -235,8 +235,8 @@ async def test_soft_extension_allows_open(tmp_path):
         {
             "address": "ext",
             "signal_type": 12,
-            "market_cap": 250_000,
-            "trigger_mc": 100_000,
+            "market_cap": 45_000,
+            "trigger_mc": 20_000,
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,

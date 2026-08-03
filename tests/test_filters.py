@@ -4,8 +4,8 @@ from lumibot.models import Source, TokenCandidate
 
 
 SOL = FiltersCfg(
-    mc_min=50_000,
-    mc_max=2_000_000,
+    mc_min=1_000,
+    mc_max=50_000,
     liquidity_min=10_000,
     top10_max=0.30,
     holders_min=100,
@@ -19,8 +19,8 @@ def _base(**kwargs) -> TokenCandidate:
         address="Tok",
         source=Source.SIGNAL,
         signal_type=12,
-        market_cap=100_000,
-        trigger_mc=100_000,
+        market_cap=40_000,
+        trigger_mc=40_000,
         liquidity=20_000,
         top10_rate=0.2,
         holder_count=200,
@@ -31,7 +31,7 @@ def _base(**kwargs) -> TokenCandidate:
 
 
 def test_signal_dual_mc_rejects_low_trigger():
-    cand = _base(trigger_mc=10_000)
+    cand = _base(trigger_mc=500)
     r = apply_light_filters(cand, SOL)
     assert not r.ok and r.reason == "trigger_mc"
 
