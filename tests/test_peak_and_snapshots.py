@@ -18,6 +18,7 @@ async def test_open_paper_stores_mark_peak(tmp_path):
     assert row is not None
     assert row["peak_price"] == mark
     assert row["entry_price"] == entry
+    assert float(row["open_mark"]) == mark
     await db.close()
 
 

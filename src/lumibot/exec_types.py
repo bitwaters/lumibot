@@ -12,8 +12,10 @@ class ExecResult:
     notional_usd: float | None = None
     qty: float | None = None
     mark: float | None = None
+    open_mark: float | None = None
     position_id: int | None = None
     buy_slip: float | None = None
+    hard_stop_pct: float | None = None
 
 
 @dataclass

@@ -73,6 +73,7 @@ class PaperExecutor(Executor):
             order.notional_usd,
             order.peak_price,
             symbol=cand.symbol,
+            open_mark=order.open_mark,
         )
         if pos_id is None:
             logger.info(
@@ -80,13 +81,19 @@ class PaperExecutor(Executor):
                 cand.chain,
                 cand.address,
             )
-            return ExecResult(status="skipped_open", mark=mark)
+            return ExecResult(
+                status="skipped_open",
+                mark=mark,
+                open_mark=mark,
+                hard_stop_pct=self.strategy.hard_stop_pct,
+            )
         logger.info(
-            "paper_opened chain=%s token=%s id=%s entry=%.8f peak=%.8f",
+            "paper_opened chain=%s token=%s id=%s entry=%.8f open_mark=%.8f peak=%.8f",
             cand.chain,
             cand.address,
             pos_id,
             order.entry_price,
+            order.open_mark,
             order.peak_price,
         )
         return ExecResult(
@@ -95,8 +102,10 @@ class PaperExecutor(Executor):
             notional_usd=order.notional_usd,
             qty=order.qty,
             mark=mark,
+            open_mark=order.open_mark,
             position_id=pos_id,
             buy_slip=order.buy_slip,
+            hard_stop_pct=order.hard_stop_pct,
         )
 
     async def manage_open_positions(self) -> None:
@@ -120,10 +129,13 @@ class PaperExecutor(Executor):
         mark = await self.client.get_price(row["chain"], row["token"], self.price_source)
         if mark is None or mark <= 0:
             return
+        keys = row.keys()
+        open_mark = float(row["open_mark"]) if "open_mark" in keys and row["open_mark"] is not None else float(row["entry_price"])
         order = StrategyOrder(
             chain=row["chain"],
             token=row["token"],
             entry_price=row["entry_price"],
+            open_mark=open_mark,
             notional_usd=row["notional_usd"],
             qty=row["qty"],
             cost_basis=row["cost_basis"],
@@ -166,7 +178,7 @@ class PaperExecutor(Executor):
                     kind="stage1",
                     chain=row["chain"],
                     token=row["token"],
-                    symbol=row["symbol"] if "symbol" in row.keys() else None,
+                    symbol=row["symbol"] if "symbol" in keys else None,
                     reason=reason or "stage1",
                     mark=mark,
                     fill_price=sell_px,
@@ -187,6 +199,8 @@ class PaperExecutor(Executor):
                 sell_qty * sell_px,
                 reason or "close",
                 pnl,
+                loss_cooldown_min=self.strategy.loss_cooldown_min,
+                post_close_cooldown_min=self.strategy.post_close_cooldown_min,
             )
             logger.info(
                 "paper_closed chain=%s token=%s reason=%s pnl=%.4f",
@@ -201,7 +215,7 @@ class PaperExecutor(Executor):
                     kind="close",
                     chain=row["chain"],
                     token=row["token"],
-                    symbol=row["symbol"] if "symbol" in row.keys() else None,
+                    symbol=row["symbol"] if "symbol" in keys else None,
                     reason=reason or "close",
                     mark=mark,
                     fill_price=sell_px,

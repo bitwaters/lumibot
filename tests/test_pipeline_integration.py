@@ -157,6 +157,14 @@ async def test_happy_path_alerts_and_opens_paper(harness):
     assert row["peak_price"] == 1.0
     entry = StrategyOrder.buy_fill_price(1.0, app.chains["sol"].execution.slippage_buy_pct)
     assert abs(row["entry_price"] - entry) < 1e-9
+    assert abs(float(row["open_mark"]) - 1.0) < 1e-9
+    cur = await db.conn.execute("SELECT payload_json FROM alerts ORDER BY id DESC LIMIT 1")
+    alert = await cur.fetchone()
+    assert alert is not None
+    import json
+
+    payload = json.loads(alert["payload_json"])
+    assert payload.get("exec_status") == "opened"
 
 
 @pytest.mark.asyncio
@@ -196,6 +204,8 @@ async def test_tg_failure_releases_cooldown(harness):
         }
     )
     assert notifier.sent == []
+    # TG fail aborted the open — no residual paper
+    assert await db.get_open_paper("sol", "x") is None
     # cooldown released → second attempt can acquire again
     notifier.ok = True
     await pipe._handle_signal(
@@ -210,6 +220,9 @@ async def test_tg_failure_releases_cooldown(harness):
         }
     )
     assert len(notifier.sent) == 1
+    assert await db.get_open_paper("sol", "x") is not None
+    # abort must not arm loss/post_close
+    assert await db.has_reentry_block("sol", "x") is None
 
 
 @pytest.mark.asyncio

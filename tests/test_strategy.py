@@ -15,11 +15,23 @@ def _order(mark=1.0, buy_slip=0.05, sell_slip=0.05) -> StrategyOrder:
     )
 
 
-def test_hard_stop_vs_initial_entry():
+def test_hard_stop_vs_open_mark():
     o = _order(mark=1.0, buy_slip=0.0)
-    # entry=1.0; hard stop at 0.8
+    # open_mark=1.0; hard stop at 0.8
     action, reason, qty = o.evaluate(0.8, time.time())
     assert action == Action.CLOSE and reason == "hard_stop" and qty == o.qty
+
+
+def test_hard_stop_ignores_buy_slip_entry():
+    """−16% from open_mark must NOT stop when buy slip made entry 5% higher."""
+    o = _order(mark=1.0, buy_slip=0.05)
+    assert abs(o.entry_price - 1.05) < 1e-12
+    assert o.open_mark == 1.0
+    # 0.84 is −16% from mark / −20% from entry — must HOLD vs open_mark
+    action, reason, _ = o.evaluate(0.84, time.time())
+    assert action == Action.HOLD and reason is None
+    action, reason, _ = o.evaluate(0.80, time.time())
+    assert action == Action.CLOSE and reason == "hard_stop"
 
 
 def test_stage1_recovers_notional_after_sell_slip():

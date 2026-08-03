@@ -19,6 +19,31 @@ def _mc_in_range(value: float | None, cfg: FiltersCfg) -> bool:
     return cfg.mc_min <= value <= cfg.mc_max
 
 
+@dataclass
+class ExtensionResult:
+    """mc_extension gate: hard reject and/or soft observability bump."""
+
+    reject: bool = False
+    soft: bool = False
+    reason: str | None = None
+
+
+def evaluate_mc_extension(cand: TokenCandidate, cfg: FiltersCfg) -> ExtensionResult:
+    """Signal-only: market_cap / trigger_mc vs max_mc_extension."""
+    if cand.source != Source.SIGNAL:
+        return ExtensionResult()
+    if cand.trigger_mc is None or cand.trigger_mc <= 0:
+        return ExtensionResult()
+    if cand.market_cap is None:
+        return ExtensionResult()
+    ratio = cand.market_cap / cand.trigger_mc
+    if ratio <= cfg.max_mc_extension:
+        return ExtensionResult()
+    if cfg.enforce_mc_extension:
+        return ExtensionResult(reject=True, reason="mc_extension")
+    return ExtensionResult(soft=True, reason="mc_extension_soft")
+
+
 def apply_light_filters(
     cand: TokenCandidate,
     cfg: FiltersCfg,

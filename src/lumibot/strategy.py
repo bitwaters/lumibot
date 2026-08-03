@@ -14,7 +14,8 @@ class Action(str, Enum):
 class StrategyOrder:
     chain: str
     token: str
-    entry_price: float  # buy fill (with buy slip); hard stop reference
+    entry_price: float  # buy fill (with buy slip); cost/qty basis
+    open_mark: float  # mark at open; hard stop reference
     notional_usd: float
     qty: float
     cost_basis: float
@@ -58,6 +59,7 @@ class StrategyOrder:
             chain=chain,
             token=token,
             entry_price=entry,
+            open_mark=mark,
             notional_usd=notional_usd,
             qty=qty,
             cost_basis=entry,
@@ -87,7 +89,7 @@ class StrategyOrder:
         """Return (action, reason, qty_to_sell)."""
         self.note_mark(mark)
 
-        if mark <= self.entry_price * (1.0 + self.hard_stop_pct):
+        if mark <= self.open_mark * (1.0 + self.hard_stop_pct):
             return Action.CLOSE, "hard_stop", self.qty
 
         if now - self.opened_at >= self.timeout_hours * 3600:

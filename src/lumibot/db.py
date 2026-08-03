@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS paper_positions (
   symbol TEXT,
   status TEXT NOT NULL,
   entry_price REAL NOT NULL,
+  open_mark REAL,
   qty REAL NOT NULL,
   notional_usd REAL NOT NULL,
   cost_basis REAL NOT NULL,
@@ -104,7 +105,41 @@ class Database:
         cols = {r["name"] for r in info_rows}
         if "symbol" not in cols:
             await self._conn.execute("ALTER TABLE paper_positions ADD COLUMN symbol TEXT")
+        if "open_mark" not in cols:
+            await self._conn.execute("ALTER TABLE paper_positions ADD COLUMN open_mark REAL")
         await self._conn.commit()
+
+    async def backfill_open_mark(
+        self,
+        buy_slip_by_chain: dict[str, float],
+        *,
+        default_slip: float = 0.05,
+    ) -> int:
+        """Fill null open_mark from entry_price / (1 + buy_slip). Returns rows updated."""
+
+        async def _tx() -> int:
+            cur = await self.conn.execute(
+                "SELECT id, chain, entry_price FROM paper_positions WHERE open_mark IS NULL"
+            )
+            rows = await cur.fetchall()
+            n = 0
+            for row in rows:
+                slip = buy_slip_by_chain.get(row["chain"], default_slip)
+                if slip < 0:
+                    slip = default_slip
+                denom = 1.0 + slip
+                if denom <= 0:
+                    continue
+                open_mark = float(row["entry_price"]) / denom
+                await self.conn.execute(
+                    "UPDATE paper_positions SET open_mark=? WHERE id=?",
+                    (open_mark, row["id"]),
+                )
+                n += 1
+            await self.conn.commit()
+            return n
+
+        return await self._with_write(_tx)
 
     async def close(self) -> None:
         if self._conn:
@@ -168,6 +203,23 @@ class Database:
                 raise
 
         return await self._with_write(_tx)
+
+    async def has_reentry_block(self, chain: str, token: str) -> str | None:
+        """Return 'loss' or 'post_close' if an active re-entry cooldown exists, else None."""
+        now = time.time()
+        cur = await self.conn.execute(
+            """
+            SELECT kind FROM cooldowns
+            WHERE chain=? AND token=? AND until_ts>? AND kind IN ('loss', 'post_close')
+            ORDER BY CASE kind WHEN 'loss' THEN 0 ELSE 1 END
+            LIMIT 1
+            """,
+            (chain, token, now),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        return str(row["kind"])
 
     async def release_cooldown(self, chain: str, token: str, source_key: str) -> None:
         """Rollback a just-acquired cooldown after notify failure.
@@ -238,9 +290,11 @@ class Database:
         notional_usd: float,
         peak_price: float,
         symbol: str | None = None,
+        open_mark: float | None = None,
     ) -> int | None:
         """Atomic check+open. Returns position id or None if already open."""
         now = time.time()
+        mark = peak_price if open_mark is None else open_mark
 
         async def _tx() -> int | None:
             await self.conn.execute("BEGIN IMMEDIATE")
@@ -256,9 +310,9 @@ class Database:
                 cur = await self.conn.execute(
                     """
                     INSERT INTO paper_positions(
-                      chain, token, symbol, status, entry_price, qty, notional_usd, cost_basis,
+                      chain, token, symbol, status, entry_price, open_mark, qty, notional_usd, cost_basis,
                       peak_price, stage1_done, opened_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?,0,?)
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,0,?)
                     """,
                     (
                         chain,
@@ -266,6 +320,7 @@ class Database:
                         symbol,
                         "open",
                         entry_price,
+                        mark,
                         qty,
                         notional_usd,
                         entry_price,
@@ -375,10 +430,18 @@ class Database:
         notional_usd: float,
         reason: str,
         realized_pnl: float,
+        *,
+        loss_cooldown_min: int = 0,
+        post_close_cooldown_min: int = 0,
     ) -> None:
         now = time.time()
 
         async def _tx() -> None:
+            cur = await self.conn.execute(
+                "SELECT chain, token FROM paper_positions WHERE id=?",
+                (position_id,),
+            )
+            pos = await cur.fetchone()
             await self.conn.execute(
                 """
                 UPDATE paper_positions
@@ -390,6 +453,38 @@ class Database:
             await self.conn.execute(
                 "INSERT INTO paper_fills(position_id, side, price, qty, notional_usd, created_at) VALUES(?,?,?,?,?,?)",
                 (position_id, "sell", price, qty, notional_usd, now),
+            )
+            if pos is not None:
+                chain, token = pos["chain"], pos["token"]
+                if post_close_cooldown_min > 0:
+                    await self.conn.execute(
+                        """
+                        INSERT INTO cooldowns(chain, token, kind, until_ts) VALUES(?,?,?,?)
+                        ON CONFLICT(chain, token, kind) DO UPDATE SET until_ts=excluded.until_ts
+                        """,
+                        (chain, token, "post_close", now + post_close_cooldown_min * 60),
+                    )
+                if reason == "hard_stop" and loss_cooldown_min > 0:
+                    await self.conn.execute(
+                        """
+                        INSERT INTO cooldowns(chain, token, kind, until_ts) VALUES(?,?,?,?)
+                        ON CONFLICT(chain, token, kind) DO UPDATE SET until_ts=excluded.until_ts
+                        """,
+                        (chain, token, "loss", now + loss_cooldown_min * 60),
+                    )
+            await self.conn.commit()
+
+        await self._with_write(_tx)
+
+    async def abort_paper_open(self, position_id: int) -> None:
+        """Void a just-opened position without arming loss/post_close cooldowns."""
+
+        async def _tx() -> None:
+            await self.conn.execute("DELETE FROM paper_fills WHERE position_id=?", (position_id,))
+            await self.conn.execute("DELETE FROM snapshots WHERE position_id=?", (position_id,))
+            await self.conn.execute(
+                "DELETE FROM paper_positions WHERE id=? AND status='open'",
+                (position_id,),
             )
             await self.conn.commit()
 
@@ -470,18 +565,33 @@ class Database:
             """
         )
         row = await cur.fetchone()
+        alert_cur = await self.conn.execute(
+            """
+            SELECT
+              COALESCE(SUM(CASE WHEN json_extract(payload_json, '$.exec_status')='opened' THEN 1 ELSE 0 END), 0)
+                AS opened_count,
+              COALESCE(SUM(CASE WHEN json_extract(payload_json, '$.exec_status')='skipped_open' THEN 1 ELSE 0 END), 0)
+                AS skipped_open_count
+            FROM alerts
+            """
+        )
+        alert_row = await alert_cur.fetchone()
         if not row:
             return {
                 "open_count": 0,
                 "closed_count": 0,
                 "closed_pnl": 0.0,
                 "open_notional": 0.0,
+                "opened_count": int(alert_row["opened_count"] if alert_row else 0),
+                "skipped_open_count": int(alert_row["skipped_open_count"] if alert_row else 0),
             }
         return {
             "open_count": int(row["open_count"] or 0),
             "closed_count": int(row["closed_count"] or 0),
             "closed_pnl": float(row["closed_pnl"] or 0),
             "open_notional": float(row["open_notional"] or 0),
+            "opened_count": int(alert_row["opened_count"] if alert_row else 0),
+            "skipped_open_count": int(alert_row["skipped_open_count"] if alert_row else 0),
         }
 
     async def top_reject_reasons(self, limit: int = 15) -> list[aiosqlite.Row]:

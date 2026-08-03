@@ -57,7 +57,9 @@ def test_card_memebot_chinese_layout():
     assert "⚠开发者持仓" in text
     assert "风险 Rug 5.0%" in text
     assert "策略 名义$20" in text
-    assert "模拟 ✅开仓 $20.00" in text
+    assert "模拟 ✅已开仓 $20.00" in text
+    assert "开仓标记" in text
+    assert "硬止损相对开仓标记" in text
     assert "/positions" in text
     assert "GMGN https://" not in text
     kb = gmgn_keyboard("sol", "SoLAddr123")
@@ -121,10 +123,14 @@ def test_help_and_positions_cards():
         "closed_count": 2,
         "closed_pnl": 1.5,
         "open_notional": 20.0,
+        "opened_count": 5,
+        "skipped_open_count": 2,
     }
     text = render_stats(summary, [])
     assert "持仓中：1 笔" in text
     assert "已实现 +$1.50" in text
+    assert "告警新开：5" in text
+    assert "已有仓跳过：2" in text
 
 
 def test_positions_use_market_cap_not_price():

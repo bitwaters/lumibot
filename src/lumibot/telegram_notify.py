@@ -70,7 +70,7 @@ def render_card(cand: TokenCandidate, paper: ExecResult | None = None) -> str:
 
     safety = "安全 " + " ".join(_safety_badges(cand.safety, cand.chain))
     risk = _risk_line(cand.safety)
-    strategy = "策略 名义$20 | 硬止损-20% | 回本+30% | 回撤30% | 超时4h"
+    strategy = "策略 名义$20 | 硬止损相对开仓标记-20% | 回本+30% | 回撤30% | 超时4h"
 
     lines = [
         _source_title(cand),
@@ -144,7 +144,8 @@ def render_positions(
         q = quotes.get((row["chain"], row["token"])) or {}
         mark = q.get("price")
         mark_mc = q.get("market_cap")
-        entry_mc = _mc_from_price_ratio(mark_mc, mark, row["entry_price"])
+        entry_ref = row["open_mark"] if "open_mark" in row.keys() and row["open_mark"] is not None else row["entry_price"]
+        entry_mc = _mc_from_price_ratio(mark_mc, mark, entry_ref)
         peak_mc = _mc_from_price_ratio(mark_mc, mark, row["peak_price"])
         u_pnl = None
         if mark is not None and row["qty"] and row["cost_basis"]:
@@ -164,7 +165,7 @@ def render_positions(
             + (f" | 浮盈 {_pnl(u_pnl)}" if u_pnl is not None else "")
         )
         lines.append("")
-    lines.append("出场：硬止损-20% / 回本+30% / 回撤30% / 超时4h")
+    lines.append("出场：硬止损相对开仓标记-20% / 回本+30% / 回撤30% / 超时4h")
     return "\n".join(lines).rstrip()
 
 
@@ -184,6 +185,7 @@ def render_stats(summary: dict, recent_closed: list) -> str:
         "",
         f"持仓中：{summary.get('open_count', 0)} 笔 | 名义 {_usd_compact(summary.get('open_notional'))}",
         f"已平仓：{summary.get('closed_count', 0)} 笔 | 已实现 {_pnl(float(summary.get('closed_pnl') or 0))}",
+        f"告警新开：{summary.get('opened_count', 0)} | 已有仓跳过：{summary.get('skipped_open_count', 0)}",
         "",
     ]
     if recent_closed:
@@ -260,8 +262,9 @@ def render_help() -> str:
             "/status     运行状态",
             "/help       本帮助",
             "",
-            "模拟规则：名义$20，买/卖滑点按链，硬止损-20%，",
+            "模拟规则：名义$20，买/卖滑点按链，硬止损相对开仓标记-20%，",
             "回本+30%减仓，峰值回撤30%，超时4h。",
+            "过门=推送+开仓；硬止损后再入场冷却3h，普通平仓45m。",
         ]
     )
 
@@ -270,13 +273,16 @@ def _paper_line(paper: ExecResult | None) -> str:
     if paper is None:
         return "模拟 —"
     if paper.status == "opened":
-        slip = f"（含买滑点 {_pct(paper.buy_slip)}）" if paper.buy_slip is not None else ""
+        mark = paper.open_mark if paper.open_mark is not None else paper.mark
+        stop_pct = paper.hard_stop_pct if paper.hard_stop_pct is not None else -0.20
+        slip = f"买滑点 {_pct(paper.buy_slip)}" if paper.buy_slip is not None else "买滑点 —"
         return (
-            f"模拟 ✅开仓 {_usd_compact(paper.notional_usd)} "
-            f"@ {_price(paper.entry_price)}{slip}"
+            f"模拟 ✅已开仓 {_usd_compact(paper.notional_usd)}\n"
+            f"开仓标记 {_price(mark)} | 成本 {_price(paper.entry_price)}（{slip}）\n"
+            f"硬止损相对开仓标记 {_pct(stop_pct)}"
         )
     if paper.status == "skipped_open":
-        return "模拟 ⏭未开仓（同币已有仓位）"
+        return "模拟 ⏭未新开（同币已有仓位，仍推送）"
     if paper.status == "no_price":
         return "模拟 ⏭未开仓（无价格）"
     if paper.status == "blocked_live":

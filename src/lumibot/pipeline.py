@@ -11,6 +11,7 @@ from lumibot.db import Database
 from lumibot.executors import Executor, LiveExecutor, PaperExecutor
 from lumibot.filters import (
     apply_light_filters,
+    evaluate_mc_extension,
     extract_platform,
     extract_signal_fields,
     extract_trending_fields,
@@ -219,6 +220,21 @@ class ChainPipeline:
             await self._reject(cand, safety.reason or "safety")
             return
 
+        ext = evaluate_mc_extension(cand, self.cfg.filters)
+        if ext.reject:
+            await self._reject(cand, ext.reason or "mc_extension")
+            return
+        if ext.soft:
+            await self.db.bump_reject(cand.chain, cand.source.value, ext.reason or "mc_extension_soft")
+
+        block = await self.db.has_reentry_block(cand.chain, cand.address)
+        if block == "loss":
+            await self._reject(cand, "loss_cooldown")
+            return
+        if block == "post_close":
+            await self._reject(cand, "post_close_cooldown")
+            return
+
         acquired = await self.db.try_acquire_cooldown(
             cand.chain,
             cand.address,
@@ -230,6 +246,14 @@ class ChainPipeline:
             await self._reject(cand, "cooldown")
             return
 
+        # Re-check after acquire to close the race with a concurrent close arming loss/post_close.
+        block = await self.db.has_reentry_block(cand.chain, cand.address)
+        if block is not None:
+            await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
+            reason = "loss_cooldown" if block == "loss" else "post_close_cooldown"
+            await self._reject(cand, reason)
+            return
+
         text_payload = {
             "chain": cand.chain,
             "address": cand.address,
@@ -239,15 +263,26 @@ class ChainPipeline:
         }
         # Open paper (or live stub) before send so the card shows 模拟仓 status.
         exec_result = await self.executor.on_alert(cand)
+        text_payload["exec_status"] = exec_result.status
         any_ok, all_ok = await self.notifier.send_candidate(cand, paper=exec_result)
         if not any_ok:
             await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
-            logger.error(
-                "telegram_failed chain=%s token=%s source=%s; cooldown released",
-                cand.chain,
-                cand.address,
-                cand.source_key,
-            )
+            if exec_result.status == "opened" and exec_result.position_id is not None:
+                await self.db.abort_paper_open(exec_result.position_id)
+                logger.error(
+                    "telegram_failed chain=%s token=%s source=%s; cooldown released; paper aborted id=%s",
+                    cand.chain,
+                    cand.address,
+                    cand.source_key,
+                    exec_result.position_id,
+                )
+            else:
+                logger.error(
+                    "telegram_failed chain=%s token=%s source=%s; cooldown released",
+                    cand.chain,
+                    cand.address,
+                    cand.source_key,
+                )
             return
         if not all_ok:
             logger.error(

@@ -39,6 +39,12 @@ async def run() -> None:
 
     db = Database(settings.lumibot_db_path)
     await db.connect()
+    slip_by_chain = {
+        name: float(cfg.execution.slippage_buy_pct) for name, cfg in app_cfg.chains.items()
+    }
+    n_backfill = await db.backfill_open_mark(slip_by_chain)
+    if n_backfill:
+        logger.info("backfilled open_mark rows=%s", n_backfill)
     limiter = RateLimiter(
         app_cfg.global_.rate_limit.capacity,
         app_cfg.global_.rate_limit.refill_per_sec,

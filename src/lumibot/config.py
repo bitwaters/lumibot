@@ -30,7 +30,7 @@ class SourceSignalCfg(BaseModel):
 class SourceTrendingCfg(BaseModel):
     enabled: bool = True
     interval_sec: int = 20
-    window: str = "5m"
+    window: str = "1m"
 
 
 class SourcesCfg(BaseModel):
@@ -45,6 +45,8 @@ class FiltersCfg(BaseModel):
     top10_max: float
     holders_min: float
     visiting_min: float
+    max_mc_extension: float = 2.0
+    enforce_mc_extension: bool = False
 
 
 class SafetyThresholds(BaseModel):
@@ -114,6 +116,8 @@ class StrategyCfg(BaseModel):
     trail_drawdown_pct: float = 0.30
     timeout_hours: float = 4
     snapshots_sec: list[int] = Field(default_factory=lambda: [60, 300, 900, 3600])
+    loss_cooldown_min: int = 180
+    post_close_cooldown_min: int = 45
 
 
 class AppConfig(BaseModel):
