@@ -304,14 +304,22 @@ def _price_from_info_dict(info: dict[str, Any]) -> float | None:
 def _market_cap_from_info_dict(info: dict[str, Any]) -> float | None:
     for key in ("market_cap", "mc", "usd_market_cap"):
         v = _as_float(info.get(key))
-        if v is not None:
+        if v is not None and v > 0:
             return v
     price_obj = info.get("price")
     if isinstance(price_obj, dict):
         for key in ("market_cap", "mc", "usd_market_cap"):
             v = _as_float(price_obj.get(key))
-            if v is not None:
+            if v is not None and v > 0:
                 return v
+    # Newer token_info payloads often omit market_cap; derive from price × supply.
+    price = _price_from_info_dict(info)
+    if price is None or price <= 0:
+        return None
+    for key in ("circulating_supply", "total_supply"):
+        supply = _as_float(info.get(key))
+        if supply is not None and supply > 0:
+            return price * supply
     return None
 
 
