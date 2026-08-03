@@ -2,6 +2,8 @@
 
 流程：`draft` → `calibrated` → `enabled`。启动门禁会拒绝 `enabled && calibration_status != calibrated`。
 
+现行数值阈值见 [runtime-params.md](./runtime-params.md)（真源 `config/chains.yaml`）。
+
 ## 每条链需完成
 
 1. **连通性**：在目标 IPv4 环境用真实 API Key 拉取该链 `token_signal` / trending / token info / security，确认字段齐全。

@@ -36,4 +36,5 @@
 - [x] 5.2 Tests: trending window `1m`; open_mark hard stop thresholds; duration 0 disables arming
 - [x] 5.3 Run full pytest suite
 - [x] 5.4 Commit, push main, `./scripts/deploy_remote.sh`; verify column, loss block, abort path, exec_status in alerts
-- [ ] 5.5 Smoke: `/status` `/stats` `/rejects`; hard_stop re-entry blocked for 3h
+- [x] 5.5 Smoke: `/status` `/stats` `/rejects`; hard_stop re-entry blocked for 3h
+  - 2026-08-03 `be8df99` Up；`open_mark` / `paper_skip_opens` 表存在；`reject_counts` 有 mc/liq/visiting 等；多条 `loss` 冷却约 150–160m 剩余（`loss_cooldown_min=180`），`post_close` 亦在武装
