@@ -1,0 +1,287 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+from typing import Any
+
+from lumibot.config import AppConfig, ChainCfg
+from lumibot.db import Database
+from lumibot.executors import Executor, LiveExecutor, PaperExecutor
+from lumibot.filters import (
+    apply_light_filters,
+    extract_platform,
+    extract_signal_fields,
+    extract_trending_fields,
+    merge_info_fields,
+)
+from lumibot.gmgn.client import GmgnClient
+from lumibot.models import Source, TokenCandidate
+from lumibot.safety import evaluate_safety, normalize_security
+from lumibot.telegram_notify import TelegramNotifier
+
+logger = logging.getLogger(__name__)
+
+
+class ChainPipeline:
+    def __init__(
+        self,
+        chain: str,
+        chain_cfg: ChainCfg,
+        app_cfg: AppConfig,
+        client: GmgnClient,
+        db: Database,
+        notifier: TelegramNotifier,
+    ) -> None:
+        self.chain = chain
+        self.cfg = chain_cfg
+        self.app_cfg = app_cfg
+        self.client = client
+        self.db = db
+        self.notifier = notifier
+        self._tasks: list[asyncio.Task] = []
+        self._stop = asyncio.Event()
+        self.executor: Executor
+        if chain_cfg.execution.mode == "live":
+            self.executor = LiveExecutor(db, app_cfg, chain, chain_cfg)
+        else:
+            self.executor = PaperExecutor(
+                db,
+                client,
+                chain,
+                chain_cfg,
+                app_cfg.strategy,
+                app_cfg.global_.price_source,
+                notifier=notifier,
+            )
+
+    def start(self) -> None:
+        if self.cfg.sources.signal.enabled:
+            self._tasks.append(asyncio.create_task(self._loop_signal(), name=f"{self.chain}-signal"))
+        if self.cfg.sources.trending.enabled:
+            self._tasks.append(asyncio.create_task(self._loop_trending(), name=f"{self.chain}-trending"))
+        if isinstance(self.executor, PaperExecutor):
+            self._tasks.append(asyncio.create_task(self._loop_manage(), name=f"{self.chain}-manage"))
+
+    async def stop(self) -> None:
+        self._stop.set()
+        for t in self._tasks:
+            t.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+
+    async def _loop_signal(self) -> None:
+        interval = self.cfg.sources.signal.interval_sec
+        types = self.cfg.sources.signal.types
+        while not self._stop.is_set():
+            try:
+                rows = await self.client.get_token_signal(self.chain, types)
+                for raw in rows:
+                    await self._handle_signal(raw)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                logger.exception("signal poll failed chain=%s", self.chain)
+            await self._sleep(interval)
+
+    async def _loop_trending(self) -> None:
+        interval = self.cfg.sources.trending.interval_sec
+        window = self.cfg.sources.trending.window
+        while not self._stop.is_set():
+            try:
+                # When the shared budget is tight, defer trending so signal can proceed.
+                if await self.client.limiter.available() < 4:
+                    logger.info("trending deferred chain=%s reason=rate_budget", self.chain)
+                    await self._sleep(min(interval, 5))
+                    continue
+                rows = await self.client.get_trending(self.chain, window)
+                for raw in rows:
+                    await self._handle_trending(raw)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                logger.exception("trending poll failed chain=%s", self.chain)
+            await self._sleep(interval)
+
+    async def _loop_manage(self) -> None:
+        assert isinstance(self.executor, PaperExecutor)
+        while not self._stop.is_set():
+            try:
+                await self.executor.manage_open_positions()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                logger.exception("paper manage failed chain=%s", self.chain)
+            await self._sleep(15)
+
+    async def _sleep(self, sec: float) -> None:
+        try:
+            await asyncio.wait_for(self._stop.wait(), timeout=sec)
+        except asyncio.TimeoutError:
+            return
+
+    async def _handle_signal(self, raw: dict[str, Any]) -> None:
+        addr = raw.get("address") or raw.get("token_address") or dig_addr(raw)
+        if not addr:
+            return
+        st = raw.get("signal_type") or raw.get("type")
+        try:
+            signal_type = int(st) if st is not None else None
+        except (TypeError, ValueError):
+            signal_type = None
+        if signal_type is None or signal_type not in self.cfg.sources.signal.types:
+            return
+        fields = extract_signal_fields(raw)
+        cand = TokenCandidate(
+            chain=self.chain,
+            address=str(addr),
+            source=Source.SIGNAL,
+            signal_type=signal_type,
+            symbol=raw.get("symbol") or raw.get("token_symbol"),
+            name=raw.get("name"),
+            market_cap=fields["market_cap"],
+            trigger_mc=fields["trigger_mc"],
+            liquidity=fields["liquidity"],
+            holder_count=fields["holder_count"],
+            top10_rate=fields["top10_rate"],
+            # Visiting MUST come from token info; ignore signal payload.
+            visiting_count=None,
+            price=fields["price"],
+            platform=extract_platform(raw),
+            raw=raw,
+        )
+        await self._enrich_and_process(cand, need_visiting_from_info=True)
+
+    async def _handle_trending(self, raw: dict[str, Any]) -> None:
+        addr = raw.get("address") or raw.get("token_address")
+        if not addr:
+            return
+        fields = extract_trending_fields(raw)
+        cand = TokenCandidate(
+            chain=self.chain,
+            address=str(addr),
+            source=Source.TRENDING,
+            symbol=raw.get("symbol") or raw.get("token_symbol"),
+            name=raw.get("name"),
+            market_cap=fields["market_cap"],
+            liquidity=fields["liquidity"],
+            holder_count=fields["holder_count"],
+            top10_rate=fields["top10_rate"],
+            visiting_count=fields["visiting_count"],
+            price=fields["price"],
+            platform=extract_platform(raw),
+            raw=raw,
+        )
+        await self._enrich_and_process(cand, need_visiting_from_info=False)
+
+    async def _enrich_and_process(self, cand: TokenCandidate, *, need_visiting_from_info: bool) -> None:
+        needs_info = need_visiting_from_info or any(
+            v is None
+            for v in (cand.market_cap, cand.liquidity, cand.top10_rate, cand.holder_count, cand.price)
+        )
+        if needs_info:
+            try:
+                info = await self.client.get_token_info(cand.chain, cand.address)
+                merge_info_fields(
+                    cand,
+                    info if isinstance(info, dict) else {},
+                    force_visiting=need_visiting_from_info,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("token info failed chain=%s token=%s", cand.chain, cand.address)
+                if need_visiting_from_info:
+                    await self._reject(cand, "visiting_missing")
+                    return
+
+        if need_visiting_from_info and cand.visiting_count is None:
+            await self._reject(cand, "visiting_missing")
+            return
+
+        fr = apply_light_filters(cand, self.cfg.filters, platforms=self.cfg.platforms)
+        if not fr.ok:
+            await self._reject(cand, fr.reason or "filter")
+            return
+
+        try:
+            sec = await self.client.get_token_security(cand.chain, cand.address)
+        except Exception:  # noqa: BLE001
+            logger.exception("token security failed chain=%s token=%s", cand.chain, cand.address)
+            await self._reject(cand, "safety_fetch")
+            return
+        safety = evaluate_safety(
+            self.cfg.safety_profile,
+            normalize_security(sec if isinstance(sec, dict) else {}),
+            self.cfg.safety,
+        )
+        cand.safety = safety
+        if safety.hard_fail:
+            await self._reject(cand, safety.reason or "safety")
+            return
+
+        acquired = await self.db.try_acquire_cooldown(
+            cand.chain,
+            cand.address,
+            cand.source_key,
+            self.cfg.cooldown.same_type_min,
+            self.cfg.cooldown.cross_source_min,
+        )
+        if not acquired:
+            await self._reject(cand, "cooldown")
+            return
+
+        text_payload = {
+            "chain": cand.chain,
+            "address": cand.address,
+            "source": cand.source_key,
+            "symbol": cand.symbol,
+            "ts": time.time(),
+        }
+        # Open paper (or live stub) before send so the card shows 模拟仓 status.
+        exec_result = await self.executor.on_alert(cand)
+        any_ok, all_ok = await self.notifier.send_candidate(cand, paper=exec_result)
+        if not any_ok:
+            await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
+            logger.error(
+                "telegram_failed chain=%s token=%s source=%s; cooldown released",
+                cand.chain,
+                cand.address,
+                cand.source_key,
+            )
+            return
+        if not all_ok:
+            logger.error(
+                "telegram_partial chain=%s token=%s source=%s; cooldown kept",
+                cand.chain,
+                cand.address,
+                cand.source_key,
+            )
+
+        await self.db.insert_alert(
+            cand.chain, cand.address, cand.source_key, json.dumps(text_payload)
+        )
+        logger.info(
+            "alert_sent chain=%s token=%s source=%s exec=%s all_tg=%s",
+            cand.chain,
+            cand.address,
+            cand.source_key,
+            exec_result.status,
+            all_ok,
+        )
+
+    async def _reject(self, cand: TokenCandidate, reason: str) -> None:
+        await self.db.bump_reject(cand.chain, cand.source.value, reason)
+        logger.info(
+            "reject chain=%s source=%s token=%s reason=%s",
+            cand.chain,
+            cand.source.value,
+            cand.address,
+            reason,
+        )
+
+
+def dig_addr(raw: dict[str, Any]) -> str | None:
+    token = raw.get("token")
+    if isinstance(token, dict):
+        return token.get("address") or token.get("token_address")
+    return None

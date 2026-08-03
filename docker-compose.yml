@@ -1,0 +1,17 @@
+services:
+  lumibot:
+    build: .
+    container_name: lumibot
+    env_file: .env
+    environment:
+      TZ: UTC
+      LUMIBOT_DB_PATH: /data/lumibot.db
+    volumes:
+      # Absolute path on /www data disk — do not use Docker named volumes on system disk.
+      - /www/lumibot/data:/data
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

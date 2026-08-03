@@ -1,0 +1,148 @@
+global:
+  live_master_switch: false
+  rate_limit:
+    capacity: 20
+    refill_per_sec: 6
+  enrichment_cache_ttl_sec: 300
+  price_source: token_info  # token_info | kline
+
+strategy:
+  notional_usd: 20
+  hard_stop_pct: -0.20
+  stage1_tp_pct: 0.30
+  trail_drawdown_pct: 0.30
+  timeout_hours: 4
+  snapshots_sec: [60, 300, 900, 3600]
+
+chains:
+  sol:
+    enabled: true
+    calibration_status: calibrated
+    safety_profile: sol_v1
+    quote_tokens:
+      - symbol: SOL
+        address: So11111111111111111111111111111111111111112
+      - symbol: USDC
+        address: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+    platforms: []
+    sources:
+      signal:
+        enabled: true
+        interval_sec: 5
+        types: [12, 20]
+      trending:
+        enabled: true
+        interval_sec: 20
+        window: 5m
+    filters:
+      mc_min: 50000
+      mc_max: 2000000
+      liquidity_min: 10000
+      top10_max: 0.30
+      holders_min: 100
+      visiting_min: 100
+    safety:
+      rug_max: 0.3
+      bundler_max: 0.3
+      rat_max: 0.3
+      tax_max: 0.05
+    cooldown:
+      same_type_min: 45
+      cross_source_min: 15
+    execution:
+      mode: paper
+      live_enabled: false
+      slippage_buy_pct: 0.05
+      slippage_sell_pct: 0.05
+      limits:
+        max_notional_usd: 20
+        daily_loss_usd: 50
+        daily_trades: 10
+
+  bsc:
+    enabled: false
+    calibration_status: draft
+    safety_profile: evm_v1
+    quote_tokens:
+      - symbol: BNB
+        address: "0x0000000000000000000000000000000000000000"
+      - symbol: USDC
+        address: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d"
+    platforms: []
+    sources:
+      signal:
+        enabled: true
+        interval_sec: 8
+        types: [12, 20]
+      trending:
+        enabled: true
+        interval_sec: 30
+        window: 5m
+    filters:
+      mc_min: 50000
+      mc_max: 2000000
+      liquidity_min: 10000
+      top10_max: 0.30
+      holders_min: 100
+      visiting_min: 80
+    safety:
+      rug_max: 0.3
+      bundler_max: 0.3
+      rat_max: 0.3
+      tax_max: 0.05
+    cooldown:
+      same_type_min: 45
+      cross_source_min: 15
+    execution:
+      mode: paper
+      live_enabled: false
+      slippage_buy_pct: 0.08
+      slippage_sell_pct: 0.08
+      limits:
+        max_notional_usd: 20
+        daily_loss_usd: 50
+        daily_trades: 10
+
+  robinhood:
+    enabled: false
+    calibration_status: draft
+    safety_profile: evm_v1
+    quote_tokens:
+      - symbol: NATIVE
+        address: "0x0000000000000000000000000000000000000000"
+      - symbol: WETH
+        address: "0x0bd7d308f8e1639fab988df18a8011f41eacad73"
+    platforms: []
+    sources:
+      signal:
+        enabled: true
+        interval_sec: 8
+        types: [12, 20]
+      trending:
+        enabled: true
+        interval_sec: 30
+        window: 5m
+    filters:
+      mc_min: 30000
+      mc_max: 2000000
+      liquidity_min: 8000
+      top10_max: 0.30
+      holders_min: 80
+      visiting_min: 50
+    safety:
+      rug_max: 0.3
+      bundler_max: 0.3
+      rat_max: 0.3
+      tax_max: 0.05
+    cooldown:
+      same_type_min: 45
+      cross_source_min: 15
+    execution:
+      mode: paper
+      live_enabled: false
+      slippage_buy_pct: 0.08
+      slippage_sell_pct: 0.08
+      limits:
+        max_notional_usd: 20
+        daily_loss_usd: 50
+        daily_trades: 10
