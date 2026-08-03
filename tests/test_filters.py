@@ -6,7 +6,7 @@ from lumibot.models import Source, TokenCandidate
 SOL = FiltersCfg(
     mc_min=1_000,
     mc_max=50_000,
-    liquidity_min=10_000,
+    liquidity_min=5_000,
     top10_max=0.30,
     holders_min=100,
     visiting_min=100,

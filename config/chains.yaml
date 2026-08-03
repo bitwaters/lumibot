@@ -39,7 +39,7 @@ chains:
     filters:
       mc_min: 1000
       mc_max: 50000
-      liquidity_min: 10000
+      liquidity_min: 5000
       top10_max: 0.30
       holders_min: 100
       visiting_min: 100
@@ -85,7 +85,7 @@ chains:
     filters:
       mc_min: 1000
       mc_max: 50000
-      liquidity_min: 10000
+      liquidity_min: 5000
       top10_max: 0.30
       holders_min: 100
       visiting_min: 80
@@ -131,7 +131,7 @@ chains:
     filters:
       mc_min: 1000
       mc_max: 50000
-      liquidity_min: 8000
+      liquidity_min: 5000
       top10_max: 0.30
       holders_min: 80
       visiting_min: 50
