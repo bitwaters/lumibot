@@ -47,6 +47,8 @@ class TokenCandidate:
     platform: str | None = None
     safety: NormalizedSafety | None = None
     raw: dict[str, Any] = field(default_factory=dict)
+    seen_at: float | None = None
+    open_timestamp: float | None = None
 
     @property
     def source_key(self) -> str:

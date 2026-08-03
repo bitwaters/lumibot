@@ -45,9 +45,8 @@ class PaperExecutor(Executor):
         self.notifier = notifier
 
     async def on_alert(self, cand: TokenCandidate) -> ExecResult:
+        # Pipeline must supply a post-gate fresh quote on cand.price.
         mark = cand.price
-        if mark is None or mark <= 0:
-            mark = await self.client.get_price(cand.chain, cand.address, self.price_source)
         if mark is None or mark <= 0:
             logger.warning("paper open skipped: no price chain=%s token=%s", cand.chain, cand.address)
             return ExecResult(status="no_price")
@@ -173,6 +172,13 @@ class PaperExecutor(Executor):
                 reason,
                 pnl,
             )
+            entry_mc, exit_mc, peak_mc = await self._exit_mc_fields(
+                row["chain"],
+                row["token"],
+                open_mark,
+                float(order.peak_price),
+                fill_mark=mark,
+            )
             await self._notify_event(
                 PaperTradeEvent(
                     kind="stage1",
@@ -187,6 +193,11 @@ class PaperExecutor(Executor):
                     notional_usd=row["notional_usd"],
                     entry_price=row["entry_price"],
                     remaining_qty=order.qty,
+                    open_mark=open_mark,
+                    entry_mc=entry_mc,
+                    exit_mc=exit_mc,
+                    peak_mc=peak_mc,
+                    hold_sec=now - float(row["opened_at"]),
                 )
             )
         elif action == Action.CLOSE:
@@ -210,6 +221,13 @@ class PaperExecutor(Executor):
                 pnl,
             )
             closed = True
+            entry_mc, exit_mc, peak_mc = await self._exit_mc_fields(
+                row["chain"],
+                row["token"],
+                open_mark,
+                float(order.peak_price),
+                fill_mark=mark,
+            )
             await self._notify_event(
                 PaperTradeEvent(
                     kind="close",
@@ -223,12 +241,39 @@ class PaperExecutor(Executor):
                     pnl=pnl,
                     notional_usd=row["notional_usd"],
                     entry_price=row["entry_price"],
+                    open_mark=open_mark,
+                    entry_mc=entry_mc,
+                    exit_mc=exit_mc,
+                    peak_mc=peak_mc,
+                    hold_sec=now - float(row["opened_at"]),
                 )
             )
 
         due_missing = await self._due_missing_offsets(row, now)
         if due_missing:
             await self._write_snapshots(int(row["id"]), due_missing, mark, closed=closed)
+
+    async def _exit_mc_fields(
+        self,
+        chain: str,
+        token: str,
+        open_mark: float,
+        peak_price: float,
+        *,
+        fill_mark: float,
+    ) -> tuple[float | None, float | None, float | None]:
+        """Display MC after fills. Scale entry/peak/exit off one quote snapshot using fill_mark for exit."""
+        try:
+            quote_px, mark_mc = await self.client.get_price_and_market_cap(
+                chain, token, self.price_source
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("exit quote failed chain=%s token=%s", chain, token)
+            return None, None, None
+        entry_mc = _mc_from_price_ratio(mark_mc, quote_px, open_mark)
+        peak_mc = _mc_from_price_ratio(mark_mc, quote_px, peak_price)
+        exit_mc = _mc_from_price_ratio(mark_mc, quote_px, fill_mark)
+        return entry_mc, exit_mc, peak_mc
 
     async def _notify_event(self, ev: PaperTradeEvent) -> None:
         if not self.notifier:
@@ -247,6 +292,16 @@ class PaperExecutor(Executor):
     ) -> None:
         for offset in offsets:
             await self.db.insert_snapshot(position_id, offset, mark, closed)
+
+
+def _mc_from_price_ratio(
+    mark_mc: float | None, mark_price: float | None, ref_price: float | None
+) -> float | None:
+    if mark_mc is None or mark_price is None or ref_price is None:
+        return None
+    if mark_price <= 0 or ref_price <= 0:
+        return None
+    return mark_mc * (ref_price / mark_price)
 
 
 class LiveExecutor(Executor):

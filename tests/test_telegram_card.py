@@ -1,25 +1,30 @@
+import time
+
 from lumibot.exec_types import ExecResult, PaperTradeEvent
 from lumibot.models import NormalizedSafety, Source, TokenCandidate
 from lumibot.telegram_bot import BOT_COMMANDS
 from lumibot.telegram_notify import (
     gmgn_keyboard,
     gmgn_link,
+    reject_reason_label,
+    reject_source_label,
     render_card,
     render_help,
     render_paper_event,
     render_positions,
+    render_rejects,
     render_stats,
 )
 
 
-def test_card_memebot_chinese_layout():
+def test_signal_push_card_layout():
     cand = TokenCandidate(
         chain="sol",
-        address="SoLAddr123",
+        address="SoLAddr123FullContractAddress",
         source=Source.SIGNAL,
         signal_type=12,
-        symbol="A&B <C>",
-        name="foo>bar",
+        symbol="PEPE",
+        name="ignored-for-title",
         price=0.00123,
         trigger_mc=100_000,
         market_cap=125_000,
@@ -27,6 +32,7 @@ def test_card_memebot_chinese_layout():
         top10_rate=0.22,
         holder_count=320,
         visiting_count=210,
+        open_timestamp=time.time() - 12 * 60,
         safety=NormalizedSafety(
             renounced_mint=True,
             renounced_freeze=True,
@@ -35,36 +41,42 @@ def test_card_memebot_chinese_layout():
             bundler_rate=0.12,
         ),
     )
-    paper = ExecResult(
-        status="opened",
-        entry_price=1.05,
-        notional_usd=20,
-        buy_slip=0.05,
+    paper = ExecResult(status="opened", notional_usd=20, open_mark=0.00123)
+    text = render_card(cand, paper=paper, latency_sec=1.8)
+    assert text.startswith("📡 [SOL] 信号推送  $PEPE")
+    assert "SoLAddr123FullContractAddress" in text
+    assert "🕐 开盘" in text
+    assert "💰 市值 $125.0K → 触发 $100.0K" in text
+    assert "💧 流动性 $18.0K  ·  👥 320" in text
+    assert "📊 Top10 22.0%  ·  🔥 210" in text
+    assert "🛡 安全 通过" in text
+    assert "⏱ 延迟 1.8s" in text
+    assert "✅ 已开仓 $20.00" in text
+    assert "类型12" not in text
+    assert "聪明钱" not in text
+    assert "开仓标记" not in text
+    assert "命令 /positions" not in text
+    assert "策略 名义" not in text
+    kb = gmgn_keyboard("sol", "SoLAddr123FullContractAddress")
+    assert kb.inline_keyboard[0][0].url == gmgn_link("sol", "SoLAddr123FullContractAddress")
+
+
+def test_skipped_open_brief():
+    cand = TokenCandidate(
+        chain="sol",
+        address="Addr",
+        source=Source.TRENDING,
+        symbol="X",
+        market_cap=50_000,
+        liquidity=10_000,
+        top10_rate=0.1,
+        holder_count=100,
+        visiting_count=80,
     )
-    text = render_card(cand, paper=paper)
-    assert text.startswith("[SOL] 聪明钱 · 类型12")
-    assert "$A&B <C>（foo>bar）" in text
-    assert "SoLAddr123" in text
-    assert "价格 0.00123" in text
-    assert "触发市值 $100.0K" in text
-    assert "市值 $125.0K" in text
-    assert "流动性 $18.0K" in text
-    assert "持有人 320" in text
-    assert "热度 210" in text
-    assert "Top10 22.0%" in text
-    assert "✅Mint放弃" in text
-    assert "✅冻结放弃" in text
-    assert "⚠开发者持仓" in text
-    assert "风险 Rug 5.0%" in text
-    assert "策略 名义$20" in text
-    assert "模拟 ✅已开仓 $20.00" in text
-    assert "开仓标记" in text
-    assert "硬止损相对开仓标记" in text
-    assert "/positions" in text
-    assert "GMGN https://" not in text
-    kb = gmgn_keyboard("sol", "SoLAddr123")
-    assert kb.inline_keyboard[0][0].url == gmgn_link("sol", "SoLAddr123")
-    assert kb.inline_keyboard[0][0].text == "打开 GMGN"
+    text = render_card(cand, paper=ExecResult(status="skipped_open"), latency_sec=0.5)
+    assert "📡 [SOL] 信号推送" in text
+    assert "⏭ 未新开（已有仓）" in text
+    assert "热门趋势" not in text
 
 
 def test_paper_close_event_card():
@@ -81,43 +93,46 @@ def test_paper_close_event_card():
             pnl=-2.5,
             notional_usd=20,
             entry_price=1.0,
+            entry_mc=100_000,
+            exit_mc=80_000,
+            hold_sec=192,
         )
     )
-    assert "[SOL] 模拟 · 硬止损" in text
-    assert "盈亏 -$2.50" in text
+    assert "📉 [SOL] 硬止损  $ABC  -$2.50" in text
+    assert "Tok123" in text
+    assert "入场 $100.0K → 平仓 $80.0K" in text
 
 
-def test_trending_card_label():
-    cand = TokenCandidate(
-        chain="bsc",
-        address="0xabc",
-        source=Source.TRENDING,
-        symbol="XYZ",
-        market_cap=50_000,
-        liquidity=10_000,
-        top10_rate=0.1,
-        holder_count=100,
-        visiting_count=80,
-        safety=NormalizedSafety(
-            honeypot=False,
-            renounced=True,
-            open_source=True,
-            buy_tax=0.03,
-            sell_tax=0.03,
-        ),
+def test_paper_stage1_event_uses_mc():
+    text = render_paper_event(
+        PaperTradeEvent(
+            kind="stage1",
+            chain="sol",
+            token="TokStage",
+            symbol="STG",
+            reason="stage1",
+            mark=1.3,
+            fill_price=1.235,
+            qty=10,
+            pnl=2.0,
+            notional_usd=20,
+            entry_price=1.05,
+            remaining_qty=10,
+            entry_mc=100_000,
+            exit_mc=130_000,
+        )
     )
-    text = render_card(cand)
-    assert text.startswith("[BSC] 热门趋势")
-    assert "$XYZ" in text
-    assert "0xabc" in text
-    assert "✅非蜜罐" in text
-    assert "✅弃权" in text
-    assert "✅开源" in text
+    assert "✂️ [SOL] 回本减仓  $STG" in text
+    assert "TokStage" in text
+    assert "入场 $100.0K → 减仓 $130.0K" in text
+    assert "剩余仓继续" in text
 
 
 def test_help_and_positions_cards():
-    assert "/stats" in render_help()
-    assert "当前无模拟持仓" in render_positions([])
+    help_text = render_help()
+    assert "/stats" in help_text
+    assert "过门后重取" in help_text
+    assert "📋 持仓 0 笔" in render_positions([])
     summary = {
         "open_count": 1,
         "closed_count": 2,
@@ -127,18 +142,17 @@ def test_help_and_positions_cards():
         "skipped_open_count": 2,
     }
     text = render_stats(summary, [])
-    assert "持仓中：1 笔" in text
-    assert "已实现 +$1.50" in text
-    assert "告警新开：5" in text
-    assert "已有仓跳过：2" in text
+    assert "📊 模拟统计" in text
+    assert "新开 5  ·  跳过 2" in text
 
 
 def test_positions_use_market_cap_not_price():
     row = {
         "chain": "sol",
-        "token": "TokABC",
+        "token": "TokABCFullContract",
         "symbol": "ABC",
-        "entry_price": 1.0,
+        "entry_price": 1.05,
+        "open_mark": 1.0,
         "peak_price": 1.5,
         "cost_basis": 1.0,
         "qty": 20.0,
@@ -147,14 +161,44 @@ def test_positions_use_market_cap_not_price():
     }
     text = render_positions(
         [row],
-        quotes={("sol", "TokABC"): {"price": 1.2, "market_cap": 120_000}},
+        quotes={("sol", "TokABCFullContract"): {"price": 1.2, "market_cap": 120_000}},
     )
-    assert "入场市值 $100.0K" in text
-    assert "当前 $120.0K" in text
-    assert "峰值 $150.0K" in text
-    assert "涨跌 20.0%" in text
-    assert "入场 1.0" not in text
-    assert "峰值 1.5" not in text
+    assert "TokABCFullContract" in text
+    assert "入场 $100.0K → 现 $120.0K" in text
+    assert "峰 $150.0K" in text
+
+
+def test_positions_price_fallback_when_mc_missing():
+    row = {
+        "chain": "sol",
+        "token": "TokNoMc",
+        "symbol": "NMC",
+        "entry_price": 1.05,
+        "open_mark": 1.0,
+        "peak_price": 1.5,
+        "cost_basis": 1.0,
+        "qty": 20.0,
+        "notional_usd": 20.0,
+        "stage1_done": 0,
+    }
+    text = render_positions(
+        [row],
+        quotes={("sol", "TokNoMc"): {"price": 1.2, "market_cap": None}},
+    )
+    assert "入场 1 → 现 1.2" in text
+    assert "峰 1.5" in text
+    assert "TokNoMc" in text
+
+
+def test_reject_labels():
+    assert reject_reason_label("mc") == "市值"
+    assert reject_reason_label("loss_cooldown") == "硬止损冷却"
+    assert reject_reason_label("no_price") == "无有效价格"
+    assert reject_source_label("signal") == "信号"
+    text = render_rejects(
+        [{"chain": "sol", "source": "signal", "reason": "mc", "count": 3}]
+    )
+    assert "信号 / 市值 × 3" in text
 
 
 def test_bot_quick_commands():

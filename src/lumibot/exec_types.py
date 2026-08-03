@@ -34,3 +34,8 @@ class PaperTradeEvent:
     notional_usd: float
     entry_price: float
     remaining_qty: float = 0.0
+    open_mark: float | None = None
+    entry_mc: float | None = None
+    exit_mc: float | None = None
+    peak_mc: float | None = None
+    hold_sec: float | None = None

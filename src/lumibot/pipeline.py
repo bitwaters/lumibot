@@ -16,6 +16,7 @@ from lumibot.filters import (
     extract_signal_fields,
     extract_trending_fields,
     merge_info_fields,
+    parse_open_timestamp,
 )
 from lumibot.gmgn.client import GmgnClient
 from lumibot.models import Source, TokenCandidate
@@ -91,7 +92,6 @@ class ChainPipeline:
         window = self.cfg.sources.trending.window
         while not self._stop.is_set():
             try:
-                # When the shared budget is tight, defer trending so signal can proceed.
                 if await self.client.limiter.available() < 4:
                     logger.info("trending deferred chain=%s reason=rate_budget", self.chain)
                     await self._sleep(min(interval, 5))
@@ -123,6 +123,7 @@ class ChainPipeline:
             return
 
     async def _handle_signal(self, raw: dict[str, Any]) -> None:
+        seen_at = time.time()
         addr = raw.get("address") or raw.get("token_address") or dig_addr(raw)
         if not addr:
             return
@@ -146,15 +147,17 @@ class ChainPipeline:
             liquidity=fields["liquidity"],
             holder_count=fields["holder_count"],
             top10_rate=fields["top10_rate"],
-            # Visiting MUST come from token info; ignore signal payload.
             visiting_count=None,
             price=fields["price"],
             platform=extract_platform(raw),
             raw=raw,
+            seen_at=seen_at,
+            open_timestamp=parse_open_timestamp(raw),
         )
         await self._enrich_and_process(cand, need_visiting_from_info=True)
 
     async def _handle_trending(self, raw: dict[str, Any]) -> None:
+        seen_at = time.time()
         addr = raw.get("address") or raw.get("token_address")
         if not addr:
             return
@@ -173,8 +176,40 @@ class ChainPipeline:
             price=fields["price"],
             platform=extract_platform(raw),
             raw=raw,
+            seen_at=seen_at,
+            open_timestamp=parse_open_timestamp(raw),
         )
         await self._enrich_and_process(cand, need_visiting_from_info=False)
+
+    async def _fresh_quote(self, cand: TokenCandidate) -> tuple[float | None, float | None]:
+        price_source = self.app_cfg.global_.price_source
+        last_err: Exception | None = None
+        for attempt in range(2):
+            try:
+                price, mc = await self.client.get_price_and_market_cap(
+                    cand.chain, cand.address, price_source
+                )
+                if price is not None and price > 0:
+                    return price, mc
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+                logger.warning(
+                    "post_gate_quote_failed chain=%s token=%s attempt=%s err=%s",
+                    cand.chain,
+                    cand.address,
+                    attempt + 1,
+                    exc,
+                )
+            if attempt == 0:
+                await asyncio.sleep(0.25)
+        if last_err is not None:
+            logger.error(
+                "post_gate_quote_exhausted chain=%s token=%s err=%s",
+                cand.chain,
+                cand.address,
+                last_err,
+            )
+        return None, None
 
     async def _enrich_and_process(self, cand: TokenCandidate, *, need_visiting_from_info: bool) -> None:
         needs_info = need_visiting_from_info or any(
@@ -246,7 +281,6 @@ class ChainPipeline:
             await self._reject(cand, "cooldown")
             return
 
-        # Re-check after acquire to close the race with a concurrent close arming loss/post_close.
         block = await self.db.has_reentry_block(cand.chain, cand.address)
         if block is not None:
             await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
@@ -254,17 +288,39 @@ class ChainPipeline:
             await self._reject(cand, reason)
             return
 
-        text_payload = {
+        price, mc = await self._fresh_quote(cand)
+        if price is None or price <= 0:
+            await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
+            await self._reject(cand, "no_price")
+            return
+        cand.price = price
+        # Card MC must match the post-gate quote moment; never keep the gate snapshot MC.
+        cand.market_cap = mc if mc is not None and mc > 0 else None
+
+        text_payload: dict[str, Any] = {
             "chain": cand.chain,
             "address": cand.address,
             "source": cand.source_key,
             "symbol": cand.symbol,
-            "ts": time.time(),
         }
-        # Open paper (or live stub) before send so the card shows 模拟仓 status.
+        if cand.open_timestamp is not None:
+            text_payload["open_timestamp"] = cand.open_timestamp
+
         exec_result = await self.executor.on_alert(cand)
+        if exec_result.status == "no_price":
+            # Defensive: pipeline already quoted; do not push a no-price card.
+            await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
+            await self._reject(cand, "no_price")
+            return
+        send_ts = time.time()
+        latency_sec = (send_ts - cand.seen_at) if cand.seen_at is not None else None
+        text_payload["ts"] = send_ts
+        if latency_sec is not None:
+            text_payload["latency_ms"] = int(latency_sec * 1000)
         text_payload["exec_status"] = exec_result.status
-        any_ok, all_ok = await self.notifier.send_candidate(cand, paper=exec_result)
+        any_ok, all_ok = await self.notifier.send_candidate(
+            cand, paper=exec_result, latency_sec=latency_sec
+        )
         if not any_ok:
             await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
             if exec_result.status == "opened" and exec_result.position_id is not None:
@@ -296,12 +352,13 @@ class ChainPipeline:
             cand.chain, cand.address, cand.source_key, json.dumps(text_payload)
         )
         logger.info(
-            "alert_sent chain=%s token=%s source=%s exec=%s all_tg=%s",
+            "alert_sent chain=%s token=%s source=%s exec=%s all_tg=%s latency_ms=%s",
             cand.chain,
             cand.address,
             cand.source_key,
             exec_result.status,
             all_ok,
+            text_payload.get("latency_ms"),
         )
 
     async def _reject(self, cand: TokenCandidate, reason: str) -> None:

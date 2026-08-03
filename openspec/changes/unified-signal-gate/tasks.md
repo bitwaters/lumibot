@@ -35,5 +35,5 @@
 - [x] 5.1 Tests: only-loss-row blocks; soft vs enforce extension; acquire+recheck releases cooldown; TG all-fail aborts without re-entry cooldown
 - [x] 5.2 Tests: trending window `1m`; open_mark hard stop thresholds; duration 0 disables arming
 - [x] 5.3 Run full pytest suite
-- [ ] 5.4 Commit, push main, `./scripts/deploy_remote.sh`; verify column, loss block, abort path, exec_status in alerts
+- [x] 5.4 Commit, push main, `./scripts/deploy_remote.sh`; verify column, loss block, abort path, exec_status in alerts
 - [ ] 5.5 Smoke: `/status` `/stats` `/rejects`; hard_stop re-entry blocked for 3h

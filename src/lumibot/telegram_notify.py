@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from lumibot.exec_types import ExecResult, PaperTradeEvent
-from lumibot.models import NormalizedSafety, Source, TokenCandidate
+from lumibot.models import Source, TokenCandidate
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +17,6 @@ GMGN_URL = {
     "sol": "https://gmgn.ai/sol/token/{addr}",
     "bsc": "https://gmgn.ai/bsc/token/{addr}",
     "robinhood": "https://gmgn.ai/rh/token/{addr}",
-}
-
-SIGNAL_TYPE_LABELS = {
-    12: "聪明钱",
-    20: "KOL",
 }
 
 WARN_LABELS = {
@@ -36,6 +32,59 @@ CLOSE_REASON_LABELS = {
     "close": "平仓",
 }
 
+CLOSE_ICONS = {
+    "hard_stop": "📉",
+    "trail": "📉",
+    "timeout": "⌛",
+    "stage1_full": "📉",
+    "stage1": "✂️",
+    "close": "📉",
+}
+
+SOURCE_LABELS = {
+    "signal": "信号",
+    "trending": "热门",
+}
+
+REASON_LABELS = {
+    "mc": "市值",
+    "mc_missing": "市值缺失",
+    "trigger_mc": "触发市值",
+    "liq": "流动性",
+    "liq_missing": "流动性缺失",
+    "top10": "Top10",
+    "top10_missing": "Top10缺失",
+    "holders": "持有人",
+    "holders_missing": "持有人缺失",
+    "visiting": "热度",
+    "visiting_missing": "热度缺失",
+    "platform": "平台",
+    "platform_missing": "平台缺失",
+    "mc_extension": "市值扩张",
+    "mc_extension_soft": "市值扩张(软)",
+    "loss_cooldown": "硬止损冷却",
+    "post_close_cooldown": "平仓冷却",
+    "cooldown": "告警冷却",
+    "no_price": "无有效价格",
+    "safety_fetch": "安全查询失败",
+    "safety": "安全",
+    "safety_wash": "安全·洗盘",
+    "safety_rug": "安全·Rug",
+    "safety_bundler": "安全·Bundler",
+    "safety_rat": "安全·老鼠仓",
+    "safety_unknown_profile": "安全·未知档案",
+    "safety_honeypot": "安全·蜜罐",
+    "safety_honeypot_missing": "安全·蜜罐缺失",
+    "safety_mint": "安全·Mint",
+    "safety_freeze": "安全·冻结",
+    "safety_renounced": "安全·未弃权",
+    "safety_renounced_missing": "安全·弃权缺失",
+    "safety_open_source": "安全·未开源",
+    "safety_open_source_missing": "安全·开源缺失",
+    "safety_tax": "安全·税",
+    "filter": "筛选",
+}
+
 
 def gmgn_link(chain: str, address: str) -> str:
     return GMGN_URL.get(chain, "https://gmgn.ai/token/{addr}").format(addr=address)
@@ -49,52 +98,65 @@ def gmgn_keyboard(chain: str, address: str) -> InlineKeyboardMarkup:
     )
 
 
-def render_card(cand: TokenCandidate, paper: ExecResult | None = None) -> str:
-    """Compact Chinese memebot-style alert (plain text)."""
+def reject_reason_label(reason: str) -> str:
+    return REASON_LABELS.get(reason, reason)
+
+
+def reject_source_label(source: str) -> str:
+    return SOURCE_LABELS.get(source, source)
+
+
+def format_relative_age(ts: float | None, *, now: float | None = None) -> str:
+    if ts is None or ts <= 0:
+        return "—"
+    now = time.time() if now is None else now
+    return format_duration(max(0.0, now - ts))
+
+
+def format_duration(sec: float | None) -> str:
+    if sec is None:
+        return "—"
+    sec = max(0.0, float(sec))
+    if sec < 60:
+        return f"{sec:.0f}s"
+    if sec < 3600:
+        return f"{sec / 60:.0f}m"
+    if sec < 86400:
+        return f"{sec / 3600:.1f}h"
+    return f"{sec / 86400:.1f}d"
+
+
+def format_latency(sec: float | None) -> str:
+    if sec is None:
+        return "—"
+    if sec < 10:
+        return f"{sec:.1f}s"
+    return f"{sec:.0f}s"
+
+
+def render_card(
+    cand: TokenCandidate,
+    paper: ExecResult | None = None,
+    *,
+    latency_sec: float | None = None,
+) -> str:
+    """Unified signal-push card (plain text)."""
     sym = cand.symbol or "未知"
-    name = (cand.name or "").strip()
-    token_line = f"${sym}"
-    if name and name != sym:
-        token_line += f"（{name}）"
-
-    metrics1 = f"市值 {_usd_compact(cand.market_cap)} | 流动性 {_usd_compact(cand.liquidity)}"
-    if cand.source == Source.SIGNAL and cand.trigger_mc is not None:
-        metrics1 += f" | 触发市值 {_usd_compact(cand.trigger_mc)}"
-    metrics2 = (
-        f"持有人 {_num(cand.holder_count)} | 热度 {_num(cand.visiting_count)} | "
-        f"Top10 {_pct(cand.top10_rate)}"
-    )
-    price_line = f"价格 {_price(cand.price)}"
-    if cand.platform:
-        price_line += f" | 平台 {cand.platform}"
-
-    safety = "安全 " + " ".join(_safety_badges(cand.safety, cand.chain))
-    risk = _risk_line(cand.safety)
-    strategy = "策略 名义$20 | 硬止损相对开仓标记-20% | 回本+30% | 回撤30% | 超时4h"
-
     lines = [
-        _source_title(cand),
+        f"📡 [{cand.chain_tag}] 信号推送  ${sym}",
         "",
-        token_line,
         cand.address,
         "",
-        price_line,
-        metrics1,
-        metrics2,
+        f"🕐 开盘 {format_relative_age(cand.open_timestamp)}",
+        _mc_line(cand),
+        f"💧 流动性 {_usd_compact(cand.liquidity)}  ·  👥 {_num(cand.holder_count)}",
+        f"📊 Top10 {_pct(cand.top10_rate)}  ·  🔥 {_num(cand.visiting_count)}",
         "",
-        safety,
+        _safety_line(cand),
+        "",
+        f"⏱ 延迟 {format_latency(latency_sec)}",
+        _paper_line(paper),
     ]
-    if risk:
-        lines.append(risk)
-    lines.extend(
-        [
-            "",
-            strategy,
-            _paper_line(paper),
-            "",
-            "命令 /positions /stats /rejects /help",
-        ]
-    )
     return "\n".join(lines)
 
 
@@ -102,30 +164,39 @@ def render_paper_event(ev: PaperTradeEvent) -> str:
     tag = {"sol": "SOL", "bsc": "BSC", "robinhood": "RH"}.get(ev.chain, ev.chain.upper())
     sym = ev.symbol or ev.token[:8]
     reason = CLOSE_REASON_LABELS.get(ev.reason, ev.reason)
+    icon = CLOSE_ICONS.get(ev.reason, "📉")
     pnl_s = _pnl(ev.pnl)
-    if ev.kind == "stage1":
-        title = f"[{tag}] 模拟 · 回本减仓"
-        body = (
-            f"${sym}\n"
-            f"{ev.token}\n"
-            f"\n"
-            f"卖出 {_num(ev.qty)} @ {_price(ev.fill_price)}\n"
-            f"回收约 {_usd_compact(ev.qty * ev.fill_price)} | 盈亏 {pnl_s}\n"
-            f"剩余仓 {_num(ev.remaining_qty)} | 成本上移 {_price(ev.fill_price)}\n"
-            f"入场参考 {_price(ev.entry_price)}"
-        )
-        return f"{title}\n\n{body}"
 
-    title = f"[{tag}] 模拟 · {reason}"
-    body = (
-        f"${sym}\n"
-        f"{ev.token}\n"
-        f"\n"
-        f"平仓 {_num(ev.qty)} @ {_price(ev.fill_price)}\n"
-        f"标记价 {_price(ev.mark)} | 盈亏 {pnl_s}\n"
-        f"名义 {_usd_compact(ev.notional_usd)} | 入场 {_price(ev.entry_price)}"
-    )
-    return f"{title}\n\n{body}"
+    if ev.kind == "stage1":
+        title = f"{icon} [{tag}] 回本减仓  ${sym}  {pnl_s}"
+    else:
+        title = f"{icon} [{tag}] {reason}  ${sym}  {pnl_s}"
+
+    lines = [title, "", ev.token, ""]
+    if ev.entry_mc is not None and ev.exit_mc is not None and ev.entry_mc > 0:
+        chg = (ev.exit_mc / ev.entry_mc) - 1.0
+        verb = "减仓" if ev.kind == "stage1" else "平仓"
+        lines.append(
+            f"💰 入场 {_usd_compact(ev.entry_mc)} → {verb} {_usd_compact(ev.exit_mc)}  ({_pct(chg)})"
+        )
+        if ev.kind == "stage1":
+            lines.append(
+                f"回收约 {_usd_compact(ev.qty * ev.fill_price)}  ·  剩余仓继续  ·  成本已上移"
+            )
+        else:
+            extra = f"名义 {_usd_compact(ev.notional_usd)}"
+            if ev.hold_sec is not None:
+                extra = f"⏱ 持仓 {format_duration(ev.hold_sec)}  ·  {extra}"
+            if ev.reason == "trail" and ev.peak_mc is not None:
+                extra = f"📈 峰值 {_usd_compact(ev.peak_mc)}  ·  {extra}"
+            lines.append(extra)
+    elif ev.kind == "stage1":
+        lines.append(f"💰 回收约 {_usd_compact(ev.qty * ev.fill_price)}  ·  剩余仓继续")
+        lines.append("📌 成本已上移")
+    else:
+        lines.append(f"标记价 {_price(ev.mark)}  ·  盈亏 {pnl_s}")
+        lines.append(f"名义 {_usd_compact(ev.notional_usd)}  ·  入场 {_price(ev.entry_price)}")
+    return "\n".join(lines)
 
 
 def render_positions(
@@ -133,19 +204,23 @@ def render_positions(
     *,
     quotes: dict[tuple[str, str], dict[str, float | None]] | None = None,
 ) -> str:
-    """Render open papers using market caps (not token prices)."""
     quotes = quotes or {}
     if not rows:
-        return "当前无模拟持仓。\n用 /stats 看历史盈亏。"
-    lines = ["【模拟持仓】", ""]
+        return "📋 持仓 0 笔\n\n当前无模拟持仓。\n用 /stats 看历史盈亏。"
+    lines = [f"📋 持仓 {len(rows)} 笔  ·  名义 {_usd_compact(sum(float(r['notional_usd'] or 0) for r in rows))}", ""]
     for i, row in enumerate(rows, 1):
         sym = row["symbol"] or row["token"][:8]
         tag = {"sol": "SOL", "bsc": "BSC", "robinhood": "RH"}.get(row["chain"], row["chain"].upper())
         q = quotes.get((row["chain"], row["token"])) or {}
         mark = q.get("price")
         mark_mc = q.get("market_cap")
-        entry_ref = row["open_mark"] if "open_mark" in row.keys() and row["open_mark"] is not None else row["entry_price"]
-        entry_mc = _mc_from_price_ratio(mark_mc, mark, entry_ref)
+        keys = row.keys() if hasattr(row, "keys") else row
+        open_mark = (
+            row["open_mark"]
+            if "open_mark" in keys and row["open_mark"] is not None
+            else row["entry_price"]
+        )
+        entry_mc = _mc_from_price_ratio(mark_mc, mark, open_mark)
         peak_mc = _mc_from_price_ratio(mark_mc, mark, row["peak_price"])
         u_pnl = None
         if mark is not None and row["qty"] and row["cost_basis"]:
@@ -154,18 +229,22 @@ def render_positions(
         if entry_mc and mark_mc and entry_mc > 0:
             chg = (mark_mc / entry_mc) - 1.0
         stage = "已回本" if row["stage1_done"] else "未回本"
-        lines.append(f"{i}. [{tag}] ${sym}")
+        head = f"{i}. [{tag}] ${sym}"
+        if chg is not None:
+            head += f"  {_pct(chg)}"
+        if u_pnl is not None:
+            head += f"  ·  浮盈 {_pnl(u_pnl)}"
+        lines.append(head)
         lines.append(f"   {row['token']}")
-        lines.append(
-            f"   入场市值 {_usd_compact(entry_mc)} | 当前 {_usd_compact(mark_mc)} | 峰值 {_usd_compact(peak_mc)}"
-        )
-        lines.append(
-            f"   名义 {_usd_compact(row['notional_usd'])} | {stage}"
-            + (f" | 涨跌 {_pct(chg)}" if chg is not None else "")
-            + (f" | 浮盈 {_pnl(u_pnl)}" if u_pnl is not None else "")
-        )
+        if entry_mc is not None and mark_mc is not None:
+            lines.append(
+                f"   入场 {_usd_compact(entry_mc)} → 现 {_usd_compact(mark_mc)}  ·  峰 {_usd_compact(peak_mc)}  ·  {stage}"
+            )
+        else:
+            lines.append(
+                f"   入场 {_price(open_mark)} → 现 {_price(mark)}  ·  峰 {_price(row['peak_price'])}  ·  {stage}"
+            )
         lines.append("")
-    lines.append("出场：硬止损相对开仓标记-20% / 回本+30% / 回撤30% / 超时4h")
     return "\n".join(lines).rstrip()
 
 
@@ -181,24 +260,19 @@ def _mc_from_price_ratio(
 
 def render_stats(summary: dict, recent_closed: list) -> str:
     lines = [
-        "【模拟统计】",
+        "📊 模拟统计",
         "",
-        f"持仓中：{summary.get('open_count', 0)} 笔 | 名义 {_usd_compact(summary.get('open_notional'))}",
-        f"已平仓：{summary.get('closed_count', 0)} 笔 | 已实现 {_pnl(float(summary.get('closed_pnl') or 0))}",
-        f"告警新开：{summary.get('opened_count', 0)} | 已有仓跳过：{summary.get('skipped_open_count', 0)}",
+        f"持仓 {summary.get('open_count', 0)}  ·  名义 {_usd_compact(summary.get('open_notional'))}",
+        f"已平 {summary.get('closed_count', 0)}  ·  已实现 {_pnl(float(summary.get('closed_pnl') or 0))}",
+        f"新开 {summary.get('opened_count', 0)}  ·  跳过 {summary.get('skipped_open_count', 0)}",
         "",
     ]
     if recent_closed:
-        lines.append("最近平仓：")
+        lines.append("最近平仓")
         for row in recent_closed[:8]:
             sym = row["symbol"] or row["token"][:8]
-            tag = {"sol": "SOL", "bsc": "BSC", "robinhood": "RH"}.get(
-                row["chain"], row["chain"].upper()
-            )
             reason = CLOSE_REASON_LABELS.get(row["close_reason"] or "", row["close_reason"] or "—")
-            lines.append(
-                f"· [{tag}] ${sym} {reason} {_pnl(float(row['realized_pnl'] or 0))}"
-            )
+            lines.append(f"· ${sym} {reason} {_pnl(float(row['realized_pnl'] or 0))}")
     else:
         lines.append("暂无平仓记录。")
     return "\n".join(lines)
@@ -206,147 +280,119 @@ def render_stats(summary: dict, recent_closed: list) -> str:
 
 def render_rejects(rows: list) -> str:
     if not rows:
-        return "暂无拦截统计。"
-    lines = ["【拦截统计】Top 原因", ""]
+        return "🚫 拦截 Top\n\n暂无拦截统计。"
+    lines = ["🚫 拦截 Top", ""]
     for row in rows:
-        lines.append(
-            f"· [{row['chain']}] {row['source']} / {row['reason']} × {row['count']}"
-        )
+        src = reject_source_label(str(row["source"]))
+        reason = reject_reason_label(str(row["reason"]))
+        lines.append(f"· [{row['chain']}] {src} / {reason} × {row['count']}")
     return "\n".join(lines)
 
 
 def render_status(*, enabled_chains: list[str], open_count: int, cooldowns: int, mode: str) -> str:
     return "\n".join(
         [
-            "【运行状态】",
+            "🟢 运行中",
             "",
-            f"启用链：{', '.join(enabled_chains) or '—'}",
-            f"执行模式：{mode}",
-            f"模拟持仓：{open_count}",
-            f"生效冷却：{cooldowns}",
-            "",
-            "命令：/positions /stats /rejects /alerts /help",
+            f"链 {', '.join(enabled_chains) or '—'}  ·  {mode}",
+            f"持仓 {open_count}  ·  冷却 {cooldowns}",
         ]
     )
 
 
 def render_alerts(rows: list) -> str:
     if not rows:
-        return "暂无告警记录。"
-    lines = ["【最近告警】", ""]
+        return "📨 最近告警\n\n暂无告警记录。"
+    lines = ["📨 最近告警", ""]
     for row in rows:
         sym = "?"
+        exec_status = ""
         try:
             payload = json.loads(row["payload_json"] or "{}")
             sym = payload.get("symbol") or "?"
+            st = payload.get("exec_status")
+            if st == "opened":
+                exec_status = "  ✅开仓"
+            elif st == "skipped_open":
+                exec_status = "  ⏭跳过"
         except Exception:  # noqa: BLE001
             pass
         ts = datetime.fromtimestamp(row["created_at"], tz=timezone.utc).strftime("%m-%d %H:%M")
         tag = {"sol": "SOL", "bsc": "BSC", "robinhood": "RH"}.get(row["chain"], row["chain"].upper())
-        lines.append(f"· {ts} UTC [{tag}] ${sym} {row['source_key']}")
-        lines.append(f"  {row['token'][:20]}…")
+        lines.append(f"· {ts}  [{tag}] ${sym}{exec_status}")
+        tok = row["token"]
+        lines.append(f"  {tok[:20]}…" if len(tok) > 20 else f"  {tok}")
     return "\n".join(lines)
 
 
 def render_help() -> str:
     return "\n".join(
         [
-            "【LumiBot 帮助】",
+            "📖 LumiBot",
             "",
-            "自动推送：聪明钱/KOL/热门趋势 → 筛选安全 → 模拟开仓",
+            "推送：过门后信号推送 + 模拟开仓",
+            "命令：/positions /stats /rejects /alerts /status",
             "",
-            "/positions  当前模拟持仓",
-            "/stats      模拟盈亏统计",
-            "/rejects    筛选拦截原因",
-            "/alerts     最近告警",
-            "/status     运行状态",
-            "/help       本帮助",
-            "",
-            "模拟规则：名义$20，买/卖滑点按链，硬止损相对开仓标记-20%，",
-            "回本+30%减仓，峰值回撤30%，超时4h。",
-            "过门=推送+开仓；硬止损后再入场冷却3h，普通平仓45m。",
+            "规则",
+            "· 名义 $20，买卖滑点按链",
+            "· 硬止损：相对开仓标记 -20%",
+            "· 回本 +30% 减仓；峰值回撤 30%；超时 4h",
+            "· 硬止损后再入场 3h；普通平仓后再入场 45m",
+            "· 开仓价 = 过门后重取的当时市价（筛选用当时快照，不二次门控）",
         ]
     )
 
 
+def _mc_line(cand: TokenCandidate) -> str:
+    if (
+        cand.source == Source.SIGNAL
+        and cand.trigger_mc is not None
+        and cand.trigger_mc > 0
+        and cand.market_cap is not None
+    ):
+        chg = (cand.market_cap / cand.trigger_mc) - 1.0
+        return (
+            f"💰 市值 {_usd_compact(cand.market_cap)} → 触发 {_usd_compact(cand.trigger_mc)}"
+            f"  ({_pct(chg)})"
+        )
+    return f"💰 市值 {_usd_compact(cand.market_cap)}"
+
+
+def _safety_line(cand: TokenCandidate) -> str:
+    safety = cand.safety
+    if safety is None:
+        return "🛡 安全 通过"
+    parts: list[str] = ["🛡 安全 通过"]
+    for w in safety.warnings:
+        parts.append(f"⚠ {WARN_LABELS.get(w, w)}")
+    if safety.wash_trading is True:
+        parts.append("⚠ 洗盘")
+    risk_bits: list[str] = []
+    if safety.rug_ratio is not None and safety.rug_ratio > 0:
+        risk_bits.append(f"Rug {_pct(safety.rug_ratio)}")
+    if safety.bundler_rate is not None and safety.bundler_rate > 0:
+        risk_bits.append(f"Bundler {_pct(safety.bundler_rate)}")
+    if safety.rat_rate is not None and safety.rat_rate > 0:
+        risk_bits.append(f"老鼠仓 {_pct(safety.rat_rate)}")
+    if risk_bits:
+        parts.append(" · ".join(risk_bits))
+    return "  ·  ".join(parts)
+
+
 def _paper_line(paper: ExecResult | None) -> str:
     if paper is None:
-        return "模拟 —"
+        return "—"
     if paper.status == "opened":
-        mark = paper.open_mark if paper.open_mark is not None else paper.mark
-        stop_pct = paper.hard_stop_pct if paper.hard_stop_pct is not None else -0.20
-        slip = f"买滑点 {_pct(paper.buy_slip)}" if paper.buy_slip is not None else "买滑点 —"
-        return (
-            f"模拟 ✅已开仓 {_usd_compact(paper.notional_usd)}\n"
-            f"开仓标记 {_price(mark)} | 成本 {_price(paper.entry_price)}（{slip}）\n"
-            f"硬止损相对开仓标记 {_pct(stop_pct)}"
-        )
+        return f"✅ 已开仓 {_usd_compact(paper.notional_usd)}"
     if paper.status == "skipped_open":
-        return "模拟 ⏭未新开（同币已有仓位，仍推送）"
+        return "⏭ 未新开（已有仓）"
     if paper.status == "no_price":
-        return "模拟 ⏭未开仓（无价格）"
+        return "⛔ 未开仓（无价格）"
     if paper.status == "blocked_live":
-        return "实盘 ⛔已阻断"
+        return "⛔ 实盘已阻断"
     if paper.status == "noop":
-        return "实盘 占位（未下单）"
+        return "—"
     return f"模拟 {paper.status}"
-
-
-def _source_title(cand: TokenCandidate) -> str:
-    tag = cand.chain_tag
-    if cand.source == Source.TRENDING:
-        return f"[{tag}] 热门趋势"
-    label = SIGNAL_TYPE_LABELS.get(cand.signal_type or -1, "信号")
-    if cand.signal_type is not None:
-        return f"[{tag}] {label} · 类型{cand.signal_type}"
-    return f"[{tag}] {label}"
-
-
-def _safety_badges(safety: NormalizedSafety | None, chain: str) -> list[str]:
-    if safety is None:
-        return ["✅已通过"]
-
-    badges: list[str] = []
-    profile_sol = chain == "sol"
-
-    if profile_sol:
-        if safety.renounced_mint is not None:
-            badges.append("✅Mint放弃" if safety.renounced_mint else "❌Mint未放弃")
-        if safety.renounced_freeze is not None:
-            badges.append("✅冻结放弃" if safety.renounced_freeze else "❌冻结未放弃")
-    else:
-        if safety.honeypot is not None:
-            badges.append("❌蜜罐" if safety.honeypot else "✅非蜜罐")
-        if safety.renounced is not None:
-            badges.append("✅弃权" if safety.renounced else "❌未弃权")
-        if safety.open_source is not None:
-            badges.append("✅开源" if safety.open_source else "❌未开源")
-        if safety.buy_tax is not None or safety.sell_tax is not None:
-            badges.append(f"税{_pct(safety.buy_tax)}/{_pct(safety.sell_tax)}")
-
-    if safety.wash_trading is True:
-        badges.append("❌洗盘")
-    for w in safety.warnings:
-        badges.append(f"⚠{WARN_LABELS.get(w, w)}")
-
-    if not badges:
-        badges.append("✅已通过" if not safety.hard_fail else "❌拦截")
-    return badges
-
-
-def _risk_line(safety: NormalizedSafety | None) -> str | None:
-    if safety is None:
-        return None
-    parts: list[str] = []
-    if safety.rug_ratio is not None:
-        parts.append(f"Rug {_pct(safety.rug_ratio)}")
-    if safety.bundler_rate is not None:
-        parts.append(f"Bundler {_pct(safety.bundler_rate)}")
-    if safety.rat_rate is not None:
-        parts.append(f"老鼠仓 {_pct(safety.rat_rate)}")
-    if not parts:
-        return None
-    return "风险 " + " | ".join(parts)
 
 
 def _usd_compact(v: float | None) -> str:
@@ -429,10 +475,14 @@ class TelegramNotifier:
         return ok > 0, fail == 0
 
     async def send_candidate(
-        self, cand: TokenCandidate, paper: ExecResult | None = None
+        self,
+        cand: TokenCandidate,
+        paper: ExecResult | None = None,
+        *,
+        latency_sec: float | None = None,
     ) -> tuple[bool, bool]:
         return await self.send_text(
-            render_card(cand, paper=paper),
+            render_card(cand, paper=paper, latency_sec=latency_sec),
             reply_markup=gmgn_keyboard(cand.chain, cand.address),
             disable_preview=True,
         )

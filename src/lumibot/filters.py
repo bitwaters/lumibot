@@ -147,3 +147,16 @@ def merge_info_fields(cand: TokenCandidate, info: dict, *, force_visiting: bool 
         cand.name = info.get("name") or info.get("token_name")
     if not cand.platform:
         cand.platform = extract_platform(info)
+    if cand.open_timestamp is None:
+        cand.open_timestamp = parse_open_timestamp(info)
+
+
+def parse_open_timestamp(data: dict) -> float | None:
+    ot = as_float(first_present(data, "open_timestamp", "open_time"))
+    if ot is None:
+        return None
+    if ot > 1e12:
+        ot = ot / 1000.0
+    if ot <= 0:
+        return None
+    return ot
