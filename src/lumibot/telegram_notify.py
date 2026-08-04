@@ -484,7 +484,7 @@ def render_help(app_cfg: AppConfig, *, enabled_chains: list[str] | None = None) 
         "📖 LumiBot",
         "",
         "推送：过门后信号推送 + 模拟开仓",
-        "命令：/positions /stats /rejects /alerts /status /reset_paper",
+        "命令：/positions /stats /rejects /alerts /status /reset_paper /chatid",
     ]
     for name in chains:
         cfg = app_cfg.chains.get(name)

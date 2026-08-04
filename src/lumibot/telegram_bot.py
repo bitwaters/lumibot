@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 BOT_COMMANDS: list[BotCommand] = [
     BotCommand(command="start", description="开始 / 帮助"),
     BotCommand(command="help", description="查看帮助与模拟规则"),
+    BotCommand(command="chatid", description="显示当前 chat_id（配群用）"),
     BotCommand(command="positions", description="当前模拟持仓"),
     BotCommand(command="stats", description="模拟盈亏统计"),
     BotCommand(command="rejects", description="筛选拦截原因"),
@@ -59,6 +60,18 @@ def build_dispatcher(
             logger.warning("ignored message from unauthorized chat_id=%s", chat_id)
             return False
         return True
+
+    @router.message(Command("chatid"))
+    async def cmd_chatid(message: Message) -> None:
+        # Public on purpose: used to discover group ids after adding the bot.
+        # Does not expose secrets; does not require allowlist.
+        chat = message.chat
+        if chat is None:
+            return
+        await message.answer(
+            f"chat_id={chat.id}\ntype={chat.type}",
+            parse_mode=None,
+        )
 
     async def _report_chains() -> list[str]:
         """Enabled chains plus any disabled chain that still has paper activity."""

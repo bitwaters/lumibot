@@ -5,6 +5,8 @@ GMGN meme 信号 Telegram bot（Paper 模拟优先）。只在 **IPv4** 网络�
 ## 快速开始
 
 1. 复制环境变量：`cp .env.example .env`，填入 `GMGN_API_KEY`、`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_IDS`
+   - 私聊控制台：`TELEGRAM_CHAT_IDS`（收推送 + 可发命令）
+   - 群组推送（可选）：把 bot 拉进群后发 `/chatid`，把返回的负数 id 写入 `TELEGRAM_GROUP_CHAT_IDS`（只推送，不能 `/reset_paper`）
 2. 安装：`pip install -e ".[dev]"`
 3. 确认本机有 IPv4 出站（双栈/仅 IPv6 会启动失败）
 4. 运行：`lumibot` 或 `python -m lumibot`

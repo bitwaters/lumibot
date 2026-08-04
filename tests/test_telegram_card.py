@@ -333,6 +333,7 @@ def test_bot_quick_commands():
     assert names == [
         "start",
         "help",
+        "chatid",
         "positions",
         "stats",
         "rejects",

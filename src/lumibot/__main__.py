@@ -29,6 +29,8 @@ async def run() -> None:
     chat_ids = settings.chat_ids()
     if not chat_ids:
         raise SystemExit("TELEGRAM_CHAT_IDS is required")
+    push_chat_ids = settings.push_chat_ids()
+    group_chat_ids = settings.group_chat_ids()
 
     await probe_ipv4_or_raise(skip=settings.lumibot_skip_ipv4_check)
 
@@ -55,7 +57,13 @@ async def run() -> None:
         cache_ttl_sec=app_cfg.global_.enrichment_cache_ttl_sec,
         security_cache_ttl_sec=app_cfg.global_.security_cache_ttl_sec,
     )
-    notifier = TelegramNotifier(settings.telegram_bot_token, chat_ids)
+    notifier = TelegramNotifier(settings.telegram_bot_token, push_chat_ids)
+    logger.info(
+        "telegram destinations control=%s push=%s (groups=%s)",
+        len(chat_ids),
+        len(push_chat_ids),
+        len(group_chat_ids),
+    )
 
     pipelines = [
         ChainPipeline(name, cfg, app_cfg, client, db, notifier) for name, cfg in chains.items()

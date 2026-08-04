@@ -174,14 +174,19 @@ class Settings(BaseSettings):
 
     gmgn_api_key: str = ""
     telegram_bot_token: str = ""
+    # Private (and optionally trusted) chats: receive pushes AND may run bot commands.
     telegram_chat_ids: str = ""
+    # Push-only destinations (typically Telegram groups/supergroups, negative ids).
+    # These receive signal/paper cards but cannot run /reset_paper etc.
+    telegram_group_chat_ids: str = ""
     lumibot_config: str = "config/chains.yaml"
     lumibot_db_path: str = "data/lumibot.db"
     lumibot_skip_ipv4_check: bool = False
 
-    def chat_ids(self) -> list[int]:
+    @staticmethod
+    def _parse_id_list(raw: str, *, env_name: str) -> list[int]:
         ids: list[int] = []
-        for part in self.telegram_chat_ids.split(","):
+        for part in raw.split(","):
             part = part.strip()
             if not part:
                 continue
@@ -189,10 +194,31 @@ class Settings(BaseSettings):
                 ids.append(int(part))
             except ValueError as exc:
                 raise ValueError(
-                    f"invalid TELEGRAM_CHAT_IDS entry {part!r}: expected a comma-separated "
+                    f"invalid {env_name} entry {part!r}: expected a comma-separated "
                     "list of integer chat ids"
                 ) from exc
         return ids
+
+    def chat_ids(self) -> list[int]:
+        """Command-authorized chats (also receive pushes)."""
+        return self._parse_id_list(self.telegram_chat_ids, env_name="TELEGRAM_CHAT_IDS")
+
+    def group_chat_ids(self) -> list[int]:
+        """Push-only group/supergroup chats."""
+        return self._parse_id_list(
+            self.telegram_group_chat_ids, env_name="TELEGRAM_GROUP_CHAT_IDS"
+        )
+
+    def push_chat_ids(self) -> list[int]:
+        """All destinations that receive signal/paper cards (control ∪ groups, deduped)."""
+        seen: set[int] = set()
+        out: list[int] = []
+        for cid in [*self.chat_ids(), *self.group_chat_ids()]:
+            if cid in seen:
+                continue
+            seen.add(cid)
+            out.append(cid)
+        return out
 
 
 def load_app_config(path: str | Path) -> AppConfig:
