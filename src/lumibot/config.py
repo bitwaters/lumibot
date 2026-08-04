@@ -177,7 +177,7 @@ class Settings(BaseSettings):
     # Private (and optionally trusted) chats: receive pushes AND may run bot commands.
     telegram_chat_ids: str = ""
     # Push-only destinations (typically Telegram groups/supergroups, negative ids).
-    # These receive signal/paper cards but cannot run /reset_paper etc.
+    # These receive signal/paper cards and may use read-only commands; /reset_paper stays private.
     telegram_group_chat_ids: str = ""
     lumibot_config: str = "config/chains.yaml"
     lumibot_db_path: str = "data/lumibot.db"

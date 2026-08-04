@@ -73,7 +73,8 @@ async def run() -> None:
         logger.info("pipeline started chain=%s", p.chain)
 
     dp = build_dispatcher(
-        allowed_chat_ids=set(chat_ids),
+        control_chat_ids=set(chat_ids),
+        group_chat_ids=set(group_chat_ids),
         db=db,
         client=client,
         app_cfg=app_cfg,

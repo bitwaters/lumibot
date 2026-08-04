@@ -4,7 +4,13 @@ import logging
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import BotCommand, Message
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeDefault,
+    Message,
+)
 
 from lumibot.config import AppConfig
 from lumibot.db import Database
@@ -23,7 +29,7 @@ from lumibot.telegram_notify import (
 
 logger = logging.getLogger(__name__)
 
-BOT_COMMANDS: list[BotCommand] = [
+BOT_COMMANDS_COMMON: list[BotCommand] = [
     BotCommand(command="start", description="开始 / 帮助"),
     BotCommand(command="help", description="查看帮助与模拟规则"),
     BotCommand(command="chatid", description="显示当前 chat_id（配群用）"),
@@ -32,39 +38,70 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand(command="rejects", description="筛选拦截原因"),
     BotCommand(command="alerts", description="最近告警"),
     BotCommand(command="status", description="运行状态"),
+]
+
+BOT_COMMANDS_PRIVATE_ONLY: list[BotCommand] = [
     BotCommand(command="reset_paper", description="清空本轮模拟（需 confirm）"),
 ]
+
+# Full menu for private / default scope (includes reset).
+BOT_COMMANDS: list[BotCommand] = [*BOT_COMMANDS_COMMON, *BOT_COMMANDS_PRIVATE_ONLY]
+# Group menu: same as common — no reset_paper shortcut.
+BOT_COMMANDS_GROUP: list[BotCommand] = list(BOT_COMMANDS_COMMON)
 
 ALERTS_PER_CHAIN = 5
 
 
 async def register_bot_commands(bot: Bot) -> None:
-    await bot.set_my_commands(BOT_COMMANDS)
-    logger.info("telegram bot commands registered: %s", [c.command for c in BOT_COMMANDS])
+    # Default + private: full menu including reset_paper.
+    await bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeDefault())
+    await bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeAllPrivateChats())
+    # Groups: omit reset_paper from the slash menu.
+    await bot.set_my_commands(BOT_COMMANDS_GROUP, scope=BotCommandScopeAllGroupChats())
+    logger.info(
+        "telegram bot commands registered private=%s group=%s",
+        [c.command for c in BOT_COMMANDS],
+        [c.command for c in BOT_COMMANDS_GROUP],
+    )
 
 
 def build_dispatcher(
     *,
-    allowed_chat_ids: set[int],
+    control_chat_ids: set[int],
+    group_chat_ids: set[int] | None = None,
     db: Database,
     client: GmgnClient,
     app_cfg: AppConfig,
     enabled_chains: list[str],
+    # Backward-compatible alias used by older callers/tests.
+    allowed_chat_ids: set[int] | None = None,
 ) -> Dispatcher:
+    control = set(control_chat_ids)
+    if allowed_chat_ids is not None and not control:
+        control = set(allowed_chat_ids)
+    groups = set(group_chat_ids or ())
+    allowed = control | groups
+
     dp = Dispatcher()
     router = Router()
 
+    def _chat_id(message: Message) -> int | None:
+        return message.chat.id if message.chat else None
+
     def _authorized(message: Message) -> bool:
-        chat_id = message.chat.id if message.chat else None
-        if chat_id is None or chat_id not in allowed_chat_ids:
+        chat_id = _chat_id(message)
+        if chat_id is None or chat_id not in allowed:
             logger.warning("ignored message from unauthorized chat_id=%s", chat_id)
             return False
         return True
 
+    def _can_reset(message: Message) -> bool:
+        chat_id = _chat_id(message)
+        return chat_id is not None and chat_id in control
+
     @router.message(Command("chatid"))
     async def cmd_chatid(message: Message) -> None:
         # Public on purpose: used to discover group ids after adding the bot.
-        # Does not expose secrets; does not require allowlist.
         chat = message.chat
         if chat is None:
             return
@@ -94,21 +131,24 @@ def build_dispatcher(
                 seen.add(name)
         return names
 
+    def _help_text(message: Message) -> str:
+        return render_help(
+            app_cfg,
+            enabled_chains=enabled_chains,
+            include_reset=_can_reset(message),
+        )
+
     @router.message(CommandStart())
     async def cmd_start(message: Message) -> None:
         if not _authorized(message):
             return
-        await message.answer(
-            render_help(app_cfg, enabled_chains=enabled_chains), parse_mode=None
-        )
+        await message.answer(_help_text(message), parse_mode=None)
 
     @router.message(Command("help"))
     async def cmd_help(message: Message) -> None:
         if not _authorized(message):
             return
-        await message.answer(
-            render_help(app_cfg, enabled_chains=enabled_chains), parse_mode=None
-        )
+        await message.answer(_help_text(message), parse_mode=None)
 
     @router.message(Command("positions"))
     async def cmd_positions(message: Message) -> None:
@@ -132,7 +172,6 @@ def build_dispatcher(
     async def cmd_stats(message: Message) -> None:
         if not _authorized(message):
             return
-        # Per-chain sections: enabled OR any paper activity (disabled chains keep history).
         chains = await _report_chains()
         per_chain: dict[str, tuple[dict, list]] = {}
         for name in chains:
@@ -152,8 +191,6 @@ def build_dispatcher(
     async def cmd_alerts(message: Message) -> None:
         if not _authorized(message):
             return
-        # Fetch N per chain independently — do not global-LIMIT-then-group
-        # (busy SOL must not starve BSC/RH in the card).
         chains = await _report_chains()
         per_chain: dict[str, list] = {}
         for name in chains:
@@ -184,6 +221,12 @@ def build_dispatcher(
     async def cmd_reset_paper(message: Message) -> None:
         if not _authorized(message):
             return
+        if not _can_reset(message):
+            await message.answer(
+                "⛔ /reset_paper 仅限私聊控制台使用，群组禁止清空模拟。",
+                parse_mode=None,
+            )
+            return
         parts = (message.text or "").split()
         valid_scopes = {"sol", "bsc", "robinhood", "all"}
         # BREAKING: scope (chain|all) is now required. Bare `/reset_paper confirm`
@@ -194,7 +237,10 @@ def build_dispatcher(
         chain = parts[1].lower()
         deleted = await db.reset_paper_experiment(chain)
         logger.info(
-            "paper experiment reset chain=%s by chat_id=%s deleted=%s", chain, message.chat.id, deleted
+            "paper experiment reset chain=%s by chat_id=%s deleted=%s",
+            chain,
+            message.chat.id,
+            deleted,
         )
         await message.answer(render_reset_paper(deleted, chain=chain), parse_mode=None)
 

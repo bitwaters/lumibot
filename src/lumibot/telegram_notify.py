@@ -478,13 +478,21 @@ def render_alerts(
     return "\n".join(lines).rstrip()
 
 
-def render_help(app_cfg: AppConfig, *, enabled_chains: list[str] | None = None) -> str:
+def render_help(
+    app_cfg: AppConfig,
+    *,
+    enabled_chains: list[str] | None = None,
+    include_reset: bool = True,
+) -> str:
     chains = enabled_chains or [n for n, c in app_cfg.chains.items() if c.enabled]
+    cmd_line = "命令：/positions /stats /rejects /alerts /status /chatid"
+    if include_reset:
+        cmd_line += " /reset_paper"
     lines = [
         "📖 LumiBot",
         "",
         "推送：过门后信号推送 + 模拟开仓",
-        "命令：/positions /stats /rejects /alerts /status /reset_paper /chatid",
+        cmd_line,
     ]
     for name in chains:
         cfg = app_cfg.chains.get(name)
@@ -516,9 +524,14 @@ def render_help(app_cfg: AppConfig, *, enabled_chains: list[str] | None = None) 
             "· 开仓/推送指标 = 过门后重拉的实时 token 快照（筛选用当时快照，不二次门控）",
             "· ⏱ 延迟 = 本机见到该条 → 发出前的处理耗时（含过门重拉；不含轮询等待）",
             "· /stats /status /positions /alerts 按链分节展示，不混算合计",
-            "· /reset_paper <sol|bsc|robinhood|all> confirm 清空对应链的本轮模拟统计（持仓/告警/拦截/冷却）",
         ]
     )
+    if include_reset:
+        lines.append(
+            "· /reset_paper <sol|bsc|robinhood|all> confirm 清空对应链的本轮模拟统计（持仓/告警/拦截/冷却）"
+        )
+    else:
+        lines.append("· /reset_paper 仅限私聊控制台（群组不可用）")
     return "\n".join(lines)
 
 

@@ -329,6 +329,8 @@ def test_reject_labels():
 
 
 def test_bot_quick_commands():
+    from lumibot.telegram_bot import BOT_COMMANDS_GROUP
+
     names = [c.command for c in BOT_COMMANDS]
     assert names == [
         "start",
@@ -341,4 +343,28 @@ def test_bot_quick_commands():
         "status",
         "reset_paper",
     ]
+    group_names = [c.command for c in BOT_COMMANDS_GROUP]
+    assert "reset_paper" not in group_names
+    assert group_names == [
+        "start",
+        "help",
+        "chatid",
+        "positions",
+        "stats",
+        "rejects",
+        "alerts",
+        "status",
+    ]
     assert all(c.description for c in BOT_COMMANDS)
+
+
+def test_help_omits_reset_when_requested():
+    app = load_app_config("config/chains.yaml")
+    with_reset = render_help(app, enabled_chains=["sol"], include_reset=True)
+    no_reset = render_help(app, enabled_chains=["sol"], include_reset=False)
+    assert "/reset_paper <sol|bsc|robinhood|all> confirm" in with_reset
+    assert "仅限私聊控制台" in no_reset
+    assert "/reset_paper <sol|bsc|robinhood|all> confirm" not in no_reset
+    assert "命令：/positions" in no_reset
+    assert "/reset_paper" not in no_reset.splitlines()[3]
+
