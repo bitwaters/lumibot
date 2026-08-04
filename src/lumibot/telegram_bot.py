@@ -8,6 +8,7 @@ from aiogram.types import (
     BotCommand,
     BotCommandScopeAllGroupChats,
     BotCommandScopeAllPrivateChats,
+    BotCommandScopeChat,
     BotCommandScopeDefault,
     Message,
 )
@@ -52,16 +53,45 @@ BOT_COMMANDS_GROUP: list[BotCommand] = list(BOT_COMMANDS_COMMON)
 ALERTS_PER_CHAIN = 5
 
 
-async def register_bot_commands(bot: Bot) -> None:
-    # Default + private: full menu including reset_paper.
+async def register_bot_commands(
+    bot: Bot,
+    *,
+    group_chat_ids: list[int] | set[int] | None = None,
+    control_chat_ids: list[int] | set[int] | None = None,
+) -> None:
+    """Register slash menus. Groups omit reset_paper; private keeps full menu.
+
+    Telegram clients often cache the default/group-wide menu. We also set
+    BotCommandScopeChat for each known group id so that chat's shortcut list
+    refreshes explicitly.
+    """
+    groups = [int(x) for x in (group_chat_ids or [])]
+    privates = [int(x) for x in (control_chat_ids or [])]
+
+    # Clear then set default + private scopes (full menu).
+    await bot.delete_my_commands(scope=BotCommandScopeDefault())
     await bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeDefault())
+    await bot.delete_my_commands(scope=BotCommandScopeAllPrivateChats())
     await bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeAllPrivateChats())
-    # Groups: omit reset_paper from the slash menu.
+    for chat_id in privates:
+        scope = BotCommandScopeChat(chat_id=chat_id)
+        await bot.delete_my_commands(scope=scope)
+        await bot.set_my_commands(BOT_COMMANDS, scope=scope)
+
+    # Group-wide + each configured group chat (no reset_paper).
+    await bot.delete_my_commands(scope=BotCommandScopeAllGroupChats())
     await bot.set_my_commands(BOT_COMMANDS_GROUP, scope=BotCommandScopeAllGroupChats())
+    for chat_id in groups:
+        scope = BotCommandScopeChat(chat_id=chat_id)
+        await bot.delete_my_commands(scope=scope)
+        await bot.set_my_commands(BOT_COMMANDS_GROUP, scope=scope)
+
     logger.info(
-        "telegram bot commands registered private=%s group=%s",
+        "telegram bot commands registered private=%s group=%s scoped_groups=%s scoped_private=%s",
         [c.command for c in BOT_COMMANDS],
         [c.command for c in BOT_COMMANDS_GROUP],
+        groups,
+        privates,
     )
 
 

@@ -80,7 +80,11 @@ async def run() -> None:
         app_cfg=app_cfg,
         enabled_chains=list(chains.keys()),
     )
-    await register_bot_commands(notifier.bot)
+    await register_bot_commands(
+        notifier.bot,
+        group_chat_ids=group_chat_ids,
+        control_chat_ids=chat_ids,
+    )
     polling_task = asyncio.create_task(dp.start_polling(notifier.bot), name="tg-polling")
 
     stop = asyncio.Event()
