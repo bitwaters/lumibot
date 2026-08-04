@@ -12,7 +12,7 @@ async def test_open_paper_stores_mark_peak(tmp_path):
     await db.connect()
     mark = 1.0
     entry = StrategyOrder.buy_fill_price(mark, 0.05)
-    pos_id = await db.try_open_paper("sol", "tok", entry, 20 / entry, 20.0, peak_price=mark)
+    pos_id, _ = await db.try_open_paper("sol", "tok", entry, 20 / entry, 20.0, peak_price=mark)
     assert pos_id is not None
     row = await db.get_open_paper("sol", "tok")
     assert row is not None
@@ -53,9 +53,9 @@ async def test_closed_position_still_gets_due_snapshots(tmp_path):
 async def test_release_cooldown_allows_retry(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     await db.connect()
-    assert await db.try_acquire_cooldown("sol", "tok", "signal:12", 45, 15)
+    assert (await db.try_acquire_cooldown("sol", "tok", "signal:12", 45, 15)) is None
     await db.release_cooldown("sol", "tok", "signal:12")
-    assert await db.try_acquire_cooldown("sol", "tok", "signal:12", 45, 15)
+    assert (await db.try_acquire_cooldown("sol", "tok", "signal:12", 45, 15)) is None
     await db.close()
 
 

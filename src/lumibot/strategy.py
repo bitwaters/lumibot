@@ -30,6 +30,12 @@ class StrategyOrder:
     timeout_hours: float = 2.0
     stage1_sell_mode: str = "notional"  # notional | ratio
     stage1_sell_ratio: float = 0.50     # used when stage1_sell_mode == "ratio"
+    pre_stage1_trail_enable: bool = False
+    pre_stage1_trail_activate_pct: float = 0.15
+    pre_stage1_trail_drawdown_pct: float = 0.40
+    timeout_extend_if_profitable: bool = False
+    timeout_extend_hours: float = 1.0
+    trail_dynamic: bool = True
 
     @staticmethod
     def buy_fill_price(mark: float, buy_slip: float) -> float:
@@ -56,6 +62,12 @@ class StrategyOrder:
         timeout_hours: float = 2.0,
         stage1_sell_mode: str = "notional",
         stage1_sell_ratio: float = 0.50,
+        pre_stage1_trail_enable: bool = False,
+        pre_stage1_trail_activate_pct: float = 0.15,
+        pre_stage1_trail_drawdown_pct: float = 0.40,
+        timeout_extend_if_profitable: bool = False,
+        timeout_extend_hours: float = 1.0,
+        trail_dynamic: bool = True,
     ) -> StrategyOrder:
         entry = cls.buy_fill_price(mark, buy_slip)
         qty = notional_usd / entry
@@ -78,6 +90,12 @@ class StrategyOrder:
             timeout_hours=timeout_hours,
             stage1_sell_mode=stage1_sell_mode,
             stage1_sell_ratio=stage1_sell_ratio,
+            pre_stage1_trail_enable=pre_stage1_trail_enable,
+            pre_stage1_trail_activate_pct=pre_stage1_trail_activate_pct,
+            pre_stage1_trail_drawdown_pct=pre_stage1_trail_drawdown_pct,
+            timeout_extend_if_profitable=timeout_extend_if_profitable,
+            timeout_extend_hours=timeout_extend_hours,
+            trail_dynamic=trail_dynamic,
         )
 
     def note_mark(self, mark: float) -> None:
@@ -102,7 +120,20 @@ class StrategyOrder:
         if mark <= self.open_mark * (1.0 + self.hard_stop_pct):
             return Action.CLOSE, "hard_stop", self.qty
 
-        if now - self.opened_at >= self.timeout_hours * 3600:
+        # Pre-stage1 trail: protects unrealized profit if the price pumped well past
+        # the activation threshold but dumps back before ever hitting stage1_tp_pct.
+        if (
+            not self.stage1_done
+            and self.pre_stage1_trail_enable
+            and self.peak_price >= self.open_mark * (1.0 + self.pre_stage1_trail_activate_pct)
+            and mark <= self.peak_price * (1.0 - self.pre_stage1_trail_drawdown_pct)
+        ):
+            return Action.CLOSE, "pre_stage1_trail", self.qty
+
+        elapsed_h = (now - self.opened_at) / 3600.0
+
+        # Base timeout before stage1: never "save" a late stage1 into an extend window.
+        if not self.stage1_done and elapsed_h >= self.timeout_hours:
             return Action.CLOSE, "timeout", self.qty
 
         if not self.stage1_done:
@@ -114,8 +145,22 @@ class StrategyOrder:
                 return Action.STAGE1_SELL, "stage1", qty
             return Action.HOLD, None, 0.0
 
+        # After stage1: optional extend only if already stage1_done and still profitable.
+        timeout_limit_hours = self.timeout_hours
+        if self.timeout_extend_if_profitable and mark > self.cost_basis:
+            timeout_limit_hours = self.timeout_hours + self.timeout_extend_hours
+        if elapsed_h >= timeout_limit_hours:
+            return Action.CLOSE, "timeout", self.qty
+
         # Trail applies only after stage1; peak is still tracked from entry.
-        if self.peak_price > 0 and mark <= self.peak_price * (1.0 - self.trail_drawdown_pct):
+        drawdown = self.trail_drawdown_pct
+        if self.trail_dynamic and self.open_mark > 0:
+            peak_ratio = self.peak_price / self.open_mark
+            if peak_ratio > 5:
+                drawdown = 0.15
+            elif peak_ratio > 2:
+                drawdown = 0.20
+        if self.peak_price > 0 and mark <= self.peak_price * (1.0 - drawdown):
             return Action.CLOSE, "trail", self.qty
 
         return Action.HOLD, None, 0.0

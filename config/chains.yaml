@@ -4,19 +4,12 @@ global:
     capacity: 20
     refill_per_sec: 6
   enrichment_cache_ttl_sec: 300
+  security_cache_ttl_sec: 3600
   price_source: token_info  # token_info | kline
 
-strategy:
-  notional_usd: 20
-  hard_stop_pct: -0.30
-  stage1_tp_pct: 0.25
-  stage1_sell_mode: ratio   # ratio | notional; ratio sells a fixed fraction
-  stage1_sell_ratio: 0.50   # sell 50% of qty at stage1; trail the remaining 50%
-  trail_drawdown_pct: 0.30
-  timeout_hours: 2
-  snapshots_sec: [60, 300, 900, 3600]
-  loss_cooldown_min: 180
-  post_close_cooldown_min: 45
+# NOTE: strategy is defined per-chain below (chains.<name>.strategy). There is no
+# top-level strategy anymore — each chain's exit/notional behaviour is fully
+# independent and lives only in that chain's block.
 
 chains:
   sol:
@@ -28,7 +21,7 @@ chains:
         address: So11111111111111111111111111111111111111112
       - symbol: USDC
         address: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
-    platforms: []
+    platforms: []  # empty = allow all; whitelist after observing platform distribution (S4)
     sources:
       signal:
         enabled: true
@@ -38,14 +31,21 @@ chains:
         enabled: true
         interval_sec: 20
         window: 1m
+      trending_5m:
+        enabled: true
+        interval_sec: 30
+        window: 5m
     filters:
       mc_min: 10000
       mc_max: 50000
       liquidity_min: 8000
-      liquidity_ratio_min: 0.15  # liq/mc >= 15%; prevents shallow-pool tokens
+      liquidity_ratio_min: 0.20  # liq/mc >= 20%; prevents shallow-pool tokens (report suggested)
       top10_max: 0.25
       holders_min: 100
       visiting_min: 200
+      visiting_min_trending: 250  # trending payload can lag; require slightly higher heat (S6)
+      volume_1h_min: 5000
+      volume_mc_ratio_min: 0.05
       age_min_sec: 120    # reject tokens < 2 min old (dev dump risk)
       age_max_sec: 7200   # reject tokens > 2 h old (momentum likely gone); 0 = disabled
       max_mc_extension: 2.0
@@ -55,6 +55,7 @@ chains:
       bundler_max: 0.3
       rat_max: 0.3
       tax_max: 0.05
+      strict_missing: true
     cooldown:
       same_type_min: 45
       cross_source_min: 15
@@ -67,6 +68,24 @@ chains:
         max_notional_usd: 20
         daily_loss_usd: 50
         daily_trades: 10
+        max_concurrent_positions: 3
+    strategy:
+      notional_usd: 20
+      hard_stop_pct: -0.30
+      stage1_tp_pct: 0.25
+      stage1_sell_mode: ratio   # ratio | notional; ratio sells a fixed fraction
+      stage1_sell_ratio: 0.50   # sell 50% of qty at stage1; trail the remaining 50%
+      trail_drawdown_pct: 0.30
+      timeout_hours: 2
+      snapshots_sec: [60, 300, 900, 3600]
+      loss_cooldown_min: 180
+      post_close_cooldown_min: 45
+      pre_stage1_trail_enable: true
+      pre_stage1_trail_activate_pct: 0.15
+      pre_stage1_trail_drawdown_pct: 0.40
+      timeout_extend_if_profitable: true
+      timeout_extend_hours: 1.0
+      trail_dynamic: true
 
   bsc:
     enabled: false
@@ -95,6 +114,8 @@ chains:
       top10_max: 0.30
       holders_min: 100
       visiting_min: 80
+      volume_1h_min: 0
+      volume_mc_ratio_min: 0
       age_min_sec: 120
       age_max_sec: 7200
       max_mc_extension: 2.0
@@ -104,6 +125,7 @@ chains:
       bundler_max: 0.3
       rat_max: 0.3
       tax_max: 0.05
+      strict_missing: false
     cooldown:
       same_type_min: 45
       cross_source_min: 15
@@ -116,6 +138,24 @@ chains:
         max_notional_usd: 20
         daily_loss_usd: 50
         daily_trades: 10
+        max_concurrent_positions: 0
+    strategy:
+      notional_usd: 20
+      hard_stop_pct: -0.30
+      stage1_tp_pct: 0.25
+      stage1_sell_mode: ratio
+      stage1_sell_ratio: 0.50
+      trail_drawdown_pct: 0.30
+      timeout_hours: 2
+      snapshots_sec: [60, 300, 900, 3600]
+      loss_cooldown_min: 180
+      post_close_cooldown_min: 45
+      pre_stage1_trail_enable: false
+      pre_stage1_trail_activate_pct: 0.15
+      pre_stage1_trail_drawdown_pct: 0.40
+      timeout_extend_if_profitable: false
+      timeout_extend_hours: 1.0
+      trail_dynamic: true
 
   robinhood:
     enabled: false
@@ -144,6 +184,8 @@ chains:
       top10_max: 0.30
       holders_min: 80
       visiting_min: 50
+      volume_1h_min: 0
+      volume_mc_ratio_min: 0
       age_min_sec: 120
       age_max_sec: 7200
       max_mc_extension: 2.0
@@ -153,6 +195,7 @@ chains:
       bundler_max: 0.3
       rat_max: 0.3
       tax_max: 0.05
+      strict_missing: false
     cooldown:
       same_type_min: 45
       cross_source_min: 15
@@ -165,3 +208,21 @@ chains:
         max_notional_usd: 20
         daily_loss_usd: 50
         daily_trades: 10
+        max_concurrent_positions: 0
+    strategy:
+      notional_usd: 20
+      hard_stop_pct: -0.30
+      stage1_tp_pct: 0.25
+      stage1_sell_mode: ratio
+      stage1_sell_ratio: 0.50
+      trail_drawdown_pct: 0.30
+      timeout_hours: 2
+      snapshots_sec: [60, 300, 900, 3600]
+      loss_cooldown_min: 180
+      post_close_cooldown_min: 45
+      pre_stage1_trail_enable: false
+      pre_stage1_trail_activate_pct: 0.15
+      pre_stage1_trail_drawdown_pct: 0.40
+      timeout_extend_if_profitable: false
+      timeout_extend_hours: 1.0
+      trail_dynamic: true

@@ -2,6 +2,23 @@ from __future__ import annotations
 
 from typing import Any
 
+CHAIN_TAGS: dict[str, str] = {"sol": "SOL", "bsc": "BSC", "robinhood": "RH"}
+
+
+def chain_tag(chain: str) -> str:
+    return CHAIN_TAGS.get(chain, chain.upper())
+
+
+def mc_from_price_ratio(
+    mark_mc: float | None, mark_price: float | None, ref_price: float | None
+) -> float | None:
+    """Scale a market cap quote to a different reference price (same supply)."""
+    if mark_mc is None or mark_price is None or ref_price is None:
+        return None
+    if mark_price <= 0 or ref_price <= 0:
+        return None
+    return mark_mc * (ref_price / mark_price)
+
 
 def as_float(v: Any) -> float | None:
     if v is None or v == "":

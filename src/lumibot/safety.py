@@ -52,16 +52,18 @@ def evaluate_safety(
         return _fail(out, "safety_rat")
 
     if profile == "sol_v1":
-        return _sol_v1(out)
+        return _sol_v1(out, thresholds)
     if profile == "evm_v1":
         return _evm_v1(out, thresholds)
     return _fail(out, "safety_unknown_profile")
 
 
-def _sol_v1(out: NormalizedSafety) -> NormalizedSafety:
-    # honeypot empty ignored; true still hard fail if present
+def _sol_v1(out: NormalizedSafety, thresholds: SafetyThresholds) -> NormalizedSafety:
+    # honeypot empty ignored by default; strict_missing treats it as a hard fail.
     if out.honeypot is True:
         return _fail(out, "safety_honeypot")
+    if out.honeypot is None and thresholds.strict_missing:
+        return _fail(out, "safety_honeypot_missing")
     if out.renounced_mint is not True:
         return _fail(out, "safety_mint")
     if out.renounced_freeze is not True:

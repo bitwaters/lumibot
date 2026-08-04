@@ -7,6 +7,7 @@ import time
 import uuid
 import urllib.error
 import urllib.request
+from collections import OrderedDict
 from typing import Any
 from urllib.parse import urlencode
 
@@ -47,9 +48,17 @@ class RateLimiter:
 
 
 class EnrichmentCache:
-    def __init__(self, ttl_sec: int) -> None:
+    """TTL cache with LRU eviction for token_info / token_security payloads.
+
+    maxsize caps memory usage: when the cache is full, the least-recently-set
+    entry is evicted first.  This prevents unbounded growth when scanning
+    thousands of short-lived meme tokens over a long session.
+    """
+
+    def __init__(self, ttl_sec: int, maxsize: int = 5_000) -> None:
         self.ttl = ttl_sec
-        self._store: dict[tuple[str, str, str], tuple[float, Any]] = {}
+        self.maxsize = maxsize
+        self._store: OrderedDict[tuple[str, str, str], tuple[float, Any]] = OrderedDict()
 
     def get(self, kind: str, chain: str, address: str) -> Any | None:
         key = (kind, chain, address)
@@ -60,10 +69,25 @@ class EnrichmentCache:
         if time.time() - ts > self.ttl:
             self._store.pop(key, None)
             return None
+        # Move to end to record recent access (LRU)
+        self._store.move_to_end(key)
         return value
 
     def set(self, kind: str, chain: str, address: str, value: Any) -> None:
-        self._store[(kind, chain, address)] = (time.time(), value)
+        key = (kind, chain, address)
+        self._store[key] = (time.time(), value)
+        self._store.move_to_end(key)
+        # Evict oldest entries when over capacity
+        while len(self._store) > self.maxsize:
+            self._store.popitem(last=False)
+
+    def purge_expired(self) -> int:
+        """Remove all expired entries. Returns the number removed."""
+        now = time.time()
+        expired = [k for k, (ts, _) in self._store.items() if now - ts > self.ttl]
+        for k in expired:
+            self._store.pop(k, None)
+        return len(expired)
 
 
 class GmgnClient:
@@ -78,10 +102,16 @@ class GmgnClient:
         api_key: str,
         rate_limiter: RateLimiter,
         cache_ttl_sec: int = 300,
+        security_cache_ttl_sec: int | None = None,
     ) -> None:
         self.api_key = api_key
         self.limiter = rate_limiter
         self.cache = EnrichmentCache(cache_ttl_sec)
+        # token_security payloads (honeypot/renounced/tax) change far less often than
+        # price/liquidity, so they get their own (longer-lived) cache by default.
+        self.security_cache = EnrichmentCache(
+            security_cache_ttl_sec if security_cache_ttl_sec is not None else cache_ttl_sec
+        )
 
     async def aclose(self) -> None:
         return None
@@ -220,7 +250,7 @@ class GmgnClient:
         return result
 
     async def get_token_security(self, chain: str, address: str) -> dict[str, Any]:
-        cached = self.cache.get("security", chain, address)
+        cached = self.security_cache.get("security", chain, address)
         if cached is not None:
             return cached
         data = await self._request(
@@ -230,7 +260,7 @@ class GmgnClient:
             weight=1,
         )
         result = data if isinstance(data, dict) else {}
-        self.cache.set("security", chain, address, result)
+        self.security_cache.set("security", chain, address, result)
         return result
 
     async def get_price(self, chain: str, address: str, source: str = "token_info") -> float | None:

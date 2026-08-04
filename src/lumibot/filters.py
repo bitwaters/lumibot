@@ -78,9 +78,12 @@ def apply_light_filters(
         return FilterResult(False, "holders_missing")
     if cand.holder_count < cfg.holders_min:
         return FilterResult(False, "holders")
+    visiting_min = cfg.visiting_min
+    if cand.source == Source.TRENDING and cfg.visiting_min_trending is not None:
+        visiting_min = cfg.visiting_min_trending
     if cand.visiting_count is None:
         return FilterResult(False, "visiting_missing")
-    if cand.visiting_count < cfg.visiting_min:
+    if cand.visiting_count < visiting_min:
         return FilterResult(False, "visiting")
 
     # --- Age filter (requires open_timestamp from token_info) ---
@@ -96,6 +99,17 @@ def apply_light_filters(
         liq_ratio = (cand.liquidity or 0.0) / cand.market_cap
         if liq_ratio < cfg.liquidity_ratio_min:
             return FilterResult(False, "liq_ratio")
+
+    # --- Volume filters ---
+    if cfg.volume_1h_min > 0:
+        if cand.volume_1h is None:
+            return FilterResult(False, "volume_missing")
+        if cand.volume_1h < cfg.volume_1h_min:
+            return FilterResult(False, "volume_1h")
+    if cfg.volume_mc_ratio_min > 0 and cand.market_cap is not None and cand.market_cap > 0:
+        vol_ratio = (cand.volume_1h or 0.0) / cand.market_cap
+        if vol_ratio < cfg.volume_mc_ratio_min:
+            return FilterResult(False, "volume_mc_ratio")
 
     return FilterResult(True)
 
@@ -122,6 +136,7 @@ def extract_signal_fields(raw: dict) -> dict[str, float | None]:
             else dig(merged, "price", "price")
         ),
         "visiting_count": as_float(first_present(merged, "visiting_count")),
+        "volume_1h": as_float(first_present(merged, "volume_1h", "volume", "vol_1h")),
     }
 
 
@@ -138,6 +153,7 @@ def extract_trending_fields(raw: dict) -> dict[str, float | None]:
             else dig(raw, "price", "price")
         ),
         "visiting_count": as_float(first_present(raw, "visiting_count")),
+        "volume_1h": as_float(first_present(raw, "volume_1h", "volume", "vol_1h")),
     }
 
 
@@ -171,6 +187,8 @@ def merge_info_fields(cand: TokenCandidate, info: dict, *, force_visiting: bool 
         cand.holder_count = fields["holder_count"]
     if cand.price is None:
         cand.price = fields["price"]
+    if cand.volume_1h is None:
+        cand.volume_1h = fields["volume_1h"]
     if force_visiting:
         # Signal visiting MUST come from token info; never keep payload fallback.
         cand.visiting_count = fields["visiting_count"]

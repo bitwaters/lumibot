@@ -7,7 +7,7 @@ from dataclasses import dataclass
 class ExecResult:
     """Result of trying to open a position after an alert."""
 
-    status: str  # opened | skipped_open | no_price | blocked_live | noop
+    status: str  # opened | skipped_open | blocked_max_positions | no_price | blocked_live | noop
     entry_price: float | None = None
     notional_usd: float | None = None
     qty: float | None = None

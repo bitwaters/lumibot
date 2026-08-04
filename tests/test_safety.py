@@ -61,3 +61,32 @@ def test_bundler_field_priority():
     assert n.bundler_rate == 0.1
     n2 = normalize_security({"bundler_trader_amount_rate": 0.2})
     assert n2.bundler_rate == 0.2
+
+
+def test_evm_missing_honeypot_rejects_when_strict():
+    s = NormalizedSafety(
+        honeypot=None,
+        renounced=True,
+        open_source=True,
+        buy_tax=0.0,
+        sell_tax=0.0,
+        wash_trading=False,
+        rug_ratio=0.1,
+        bundler_rate=0.1,
+        rat_rate=0.1,
+    )
+    out = evaluate_safety("evm_v1", s, SafetyThresholds(strict_missing=True))
+    assert out.hard_fail and out.reason == "safety_honeypot_missing"
+
+
+def test_evm_missing_renounced_rejects():
+    s = NormalizedSafety(
+        honeypot=False,
+        renounced=None,
+        open_source=True,
+        buy_tax=0.0,
+        sell_tax=0.0,
+        wash_trading=False,
+    )
+    out = evaluate_safety("evm_v1", s, TH)
+    assert out.hard_fail and out.reason in {"safety_renounced", "safety_renounced_missing"}

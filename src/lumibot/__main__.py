@@ -53,6 +53,7 @@ async def run() -> None:
         settings.gmgn_api_key,
         limiter,
         cache_ttl_sec=app_cfg.global_.enrichment_cache_ttl_sec,
+        security_cache_ttl_sec=app_cfg.global_.security_cache_ttl_sec,
     )
     notifier = TelegramNotifier(settings.telegram_bot_token, chat_ids)
 

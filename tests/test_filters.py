@@ -44,3 +44,24 @@ def test_missing_liq_fail_closed():
 
 def test_sol_defaults_pass():
     assert apply_light_filters(_base(), SOL).ok
+
+
+def test_visiting_min_trending_stricter_than_signal():
+    cfg = FiltersCfg(
+        mc_min=1_000,
+        mc_max=50_000,
+        liquidity_min=5_000,
+        top10_max=0.30,
+        holders_min=100,
+        visiting_min=200,
+        visiting_min_trending=250,
+    )
+    signal = _base(source=Source.SIGNAL, visiting_count=220)
+    assert apply_light_filters(signal, cfg).ok
+
+    trending_low = _base(source=Source.TRENDING, signal_type=None, visiting_count=220)
+    r = apply_light_filters(trending_low, cfg)
+    assert not r.ok and r.reason == "visiting"
+
+    trending_ok = _base(source=Source.TRENDING, signal_type=None, visiting_count=250)
+    assert apply_light_filters(trending_ok, cfg).ok

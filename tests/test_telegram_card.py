@@ -136,13 +136,14 @@ def test_help_and_positions_cards():
 
     app = load_app_config("config/chains.yaml")
     help_text = render_help(app, enabled_chains=["sol"])
+    sol_strategy = app.chains["sol"].strategy
     assert "/stats" in help_text
     assert "/reset_paper" in help_text
     assert "过门后重拉" in help_text or "过门后重取" in help_text
     assert "⏱ 延迟" in help_text
-    assert _pct(app.strategy.hard_stop_pct) in help_text
-    assert _pct(app.strategy.stage1_tp_pct) in help_text
-    assert _pct(app.strategy.trail_drawdown_pct) in help_text
+    assert _pct(sol_strategy.hard_stop_pct) in help_text
+    assert _pct(sol_strategy.stage1_tp_pct) in help_text
+    assert _pct(sol_strategy.trail_drawdown_pct) in help_text
     assert "📋 持仓 0 笔" in render_positions([])
     summary = {
         "open_count": 1,
@@ -155,12 +156,118 @@ def test_help_and_positions_cards():
     }
     text = render_stats(summary, [])
     assert "📊 模拟统计" in text
+    assert "[SOL]" in text
     assert "本轮开仓 5  ·  跳过开仓 2" in text
     assert "硬止损 1/2" in text
-    assert "/reset_paper confirm" in text
+    assert "close_reason=hard_stop" in text
+    assert "/reset_paper <sol|bsc|robinhood|all> confirm" in text
+    assert "相对买入成本" in help_text or "含买滑点" in help_text
     hint = render_reset_paper_hint()
-    assert "/reset_paper confirm" in hint
+    assert "/reset_paper sol confirm" in hint
     assert "将清空" in hint
+
+
+def test_stats_status_alerts_are_per_chain():
+    from lumibot.telegram_notify import render_alerts, render_status
+
+    sol_sum = {
+        "open_count": 2,
+        "closed_count": 1,
+        "closed_pnl": 1.0,
+        "open_notional": 40.0,
+        "opened_count": 3,
+        "skipped_open_count": 0,
+        "hard_stop_count": 0,
+        "win_count": 1,
+    }
+    bsc_sum = {
+        "open_count": 0,
+        "closed_count": 0,
+        "closed_pnl": 0.0,
+        "open_notional": 0.0,
+        "opened_count": 0,
+        "skipped_open_count": 1,
+        "hard_stop_count": 0,
+        "win_count": 0,
+    }
+    text = render_stats(
+        per_chain={
+            "sol": (sol_sum, []),
+            "bsc": (bsc_sum, []),
+        }
+    )
+    assert "[SOL]" in text and "[BSC]" in text
+    assert "本轮开仓 3" in text
+    assert "跳过开仓 1" in text
+    # No blended primary totals line like "持仓 2" at the top without a chain tag
+    assert text.splitlines()[0] == "📊 模拟统计"
+
+    status = render_status(
+        chain_rows=[
+            {"name": "sol", "mode": "paper", "open_count": 2, "cooldowns": 1},
+            {"name": "bsc", "mode": "paper", "open_count": 0, "cooldowns": 0},
+        ]
+    )
+    assert "[SOL] paper  ·  持仓 2  ·  冷却 1" in status
+    assert "[BSC] paper  ·  持仓 0  ·  冷却 0" in status
+
+    # Busy SOL must not hide BSC when alerts are fetched per chain
+    alerts = render_alerts(
+        per_chain={
+            "sol": [
+                {
+                    "chain": "sol",
+                    "token": "SolTok",
+                    "created_at": 1_700_000_000,
+                    "payload_json": '{"symbol":"S","exec_status":"opened"}',
+                }
+            ]
+            * 5,
+            "bsc": [
+                {
+                    "chain": "bsc",
+                    "token": "BscTok",
+                    "created_at": 1_700_000_100,
+                    "payload_json": '{"symbol":"B","dual_source":true}',
+                }
+            ],
+        }
+    )
+    assert "[SOL]" in alerts and "[BSC]" in alerts
+    assert "BscTok" in alerts
+    assert "双源" in alerts
+
+
+def test_positions_grouped_by_chain():
+    rows = [
+        {
+            "chain": "sol",
+            "token": "SolA",
+            "symbol": "A",
+            "entry_price": 1.0,
+            "open_mark": 1.0,
+            "peak_price": 1.0,
+            "cost_basis": 1.0,
+            "qty": 10.0,
+            "notional_usd": 10.0,
+            "stage1_done": 0,
+        },
+        {
+            "chain": "bsc",
+            "token": "BscB",
+            "symbol": "B",
+            "entry_price": 1.0,
+            "open_mark": 1.0,
+            "peak_price": 1.0,
+            "cost_basis": 1.0,
+            "qty": 10.0,
+            "notional_usd": 20.0,
+            "stage1_done": 0,
+        },
+    ]
+    text = render_positions(rows, quotes={})
+    assert "[SOL]" in text and "[BSC]" in text
+    assert "SolA" in text and "BscB" in text
 
 
 def test_positions_use_market_cap_not_price():

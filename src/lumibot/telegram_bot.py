@@ -34,6 +34,8 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand(command="reset_paper", description="清空本轮模拟（需 confirm）"),
 ]
 
+ALERTS_PER_CHAIN = 5
+
 
 async def register_bot_commands(bot: Bot) -> None:
     await bot.set_my_commands(BOT_COMMANDS)
@@ -57,6 +59,27 @@ def build_dispatcher(
             logger.warning("ignored message from unauthorized chat_id=%s", chat_id)
             return False
         return True
+
+    async def _report_chains() -> list[str]:
+        """Enabled chains plus any disabled chain that still has paper activity."""
+        names = list(enabled_chains)
+        seen = set(names)
+        for name in app_cfg.chains:
+            if name in seen:
+                continue
+            summary = await db.paper_stats_summary(name)
+            if any(
+                int(summary.get(k) or 0) > 0
+                for k in (
+                    "open_count",
+                    "closed_count",
+                    "opened_count",
+                    "skipped_open_count",
+                )
+            ):
+                names.append(name)
+                seen.add(name)
+        return names
 
     @router.message(CommandStart())
     async def cmd_start(message: Message) -> None:
@@ -96,9 +119,14 @@ def build_dispatcher(
     async def cmd_stats(message: Message) -> None:
         if not _authorized(message):
             return
-        summary = await db.paper_stats_summary()
-        closed = await db.list_recent_closed_papers(8)
-        await message.answer(render_stats(summary, closed), parse_mode=None)
+        # Per-chain sections: enabled OR any paper activity (disabled chains keep history).
+        chains = await _report_chains()
+        per_chain: dict[str, tuple[dict, list]] = {}
+        for name in chains:
+            summary = await db.paper_stats_summary(name)
+            closed = await db.list_recent_closed_papers(5, chain=name)
+            per_chain[name] = (summary, closed)
+        await message.answer(render_stats(per_chain=per_chain), parse_mode=None)
 
     @router.message(Command("rejects"))
     async def cmd_rejects(message: Message) -> None:
@@ -111,42 +139,51 @@ def build_dispatcher(
     async def cmd_alerts(message: Message) -> None:
         if not _authorized(message):
             return
-        rows = await db.list_recent_alerts(10)
-        await message.answer(render_alerts(rows), parse_mode=None)
+        # Fetch N per chain independently — do not global-LIMIT-then-group
+        # (busy SOL must not starve BSC/RH in the card).
+        chains = await _report_chains()
+        per_chain: dict[str, list] = {}
+        for name in chains:
+            per_chain[name] = await db.list_recent_alerts(ALERTS_PER_CHAIN, chain=name)
+        await message.answer(render_alerts(per_chain=per_chain), parse_mode=None)
 
     @router.message(Command("status"))
     async def cmd_status(message: Message) -> None:
         if not _authorized(message):
             return
-        summary = await db.paper_stats_summary()
-        cooldowns = await db.count_active_cooldowns()
-        # Collect mode per chain so /status is accurate with multiple chains enabled
-        chain_modes: dict[str, str] = {}
+        chain_rows: list[dict] = []
         for name in enabled_chains:
             chain_cfg = app_cfg.chains.get(name)
-            if chain_cfg:
-                chain_modes[name] = chain_cfg.execution.mode
-        await message.answer(
-            render_status(
-                enabled_chains=enabled_chains,
-                open_count=int(summary.get("open_count") or 0),
-                cooldowns=cooldowns,
-                chain_modes=chain_modes,
-            ),
-            parse_mode=None,
-        )
+            mode = chain_cfg.execution.mode if chain_cfg else "paper"
+            summary = await db.paper_stats_summary(name)
+            cool = await db.count_active_cooldowns(name)
+            chain_rows.append(
+                {
+                    "name": name,
+                    "mode": mode,
+                    "open_count": int(summary.get("open_count") or 0),
+                    "cooldowns": cool,
+                }
+            )
+        await message.answer(render_status(chain_rows=chain_rows), parse_mode=None)
 
     @router.message(Command("reset_paper"))
     async def cmd_reset_paper(message: Message) -> None:
         if not _authorized(message):
             return
         parts = (message.text or "").split()
-        if len(parts) < 2 or parts[1].lower() != "confirm":
+        valid_scopes = {"sol", "bsc", "robinhood", "all"}
+        # BREAKING: scope (chain|all) is now required. Bare `/reset_paper confirm`
+        # (no scope) no longer deletes anything — it just re-shows the hint.
+        if len(parts) != 3 or parts[1].lower() not in valid_scopes or parts[2].lower() != "confirm":
             await message.answer(render_reset_paper_hint(), parse_mode=None)
             return
-        deleted = await db.reset_paper_experiment()
-        logger.info("paper experiment reset by chat_id=%s deleted=%s", message.chat.id, deleted)
-        await message.answer(render_reset_paper(deleted), parse_mode=None)
+        chain = parts[1].lower()
+        deleted = await db.reset_paper_experiment(chain)
+        logger.info(
+            "paper experiment reset chain=%s by chat_id=%s deleted=%s", chain, message.chat.id, deleted
+        )
+        await message.answer(render_reset_paper(deleted, chain=chain), parse_mode=None)
 
     @router.message(F.text)
     async def fallback(message: Message) -> None:

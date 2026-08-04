@@ -15,7 +15,7 @@ async def _fill_count(db: Database) -> int:
 async def test_reset_paper_experiment_clears_cohort_and_stats(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     await db.connect()
-    pos = await db.try_open_paper(
+    pos, _ = await db.try_open_paper(
         "sol", "tok", 1.05, 20 / 1.05, 20.0, peak_price=1.0, open_mark=1.0, symbol="T"
     )
     assert pos is not None
@@ -30,16 +30,14 @@ async def test_reset_paper_experiment_clears_cohort_and_stats(tmp_path):
         post_close_cooldown_min=45,
     )
     # Second open attempt while first (closed) is gone — reopen then skip via open position
-    pos2 = await db.try_open_paper(
+    pos2, _ = await db.try_open_paper(
         "sol", "tok2", 1.05, 20 / 1.05, 20.0, peak_price=1.0, open_mark=1.0, symbol="T2"
     )
     assert pos2 is not None
-    assert (
-        await db.try_open_paper(
-            "sol", "tok2", 1.1, 18.0, 20.0, peak_price=1.0, open_mark=1.0, symbol="T2"
-        )
-        is None
+    skip_id, skip_reason = await db.try_open_paper(
+        "sol", "tok2", 1.1, 18.0, 20.0, peak_price=1.0, open_mark=1.0, symbol="T2"
     )
+    assert skip_id is None and skip_reason == "already_open"
     await db.insert_alert(
         "sol",
         "tok",
@@ -74,10 +72,54 @@ async def test_reset_paper_experiment_clears_cohort_and_stats(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_reset_paper_experiment_scoped_to_chain(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    await db.connect()
+    sol_pos, _ = await db.try_open_paper(
+        "sol", "tok", 1.05, 20 / 1.05, 20.0, peak_price=1.0, open_mark=1.0, symbol="S"
+    )
+    bsc_pos, _ = await db.try_open_paper(
+        "bsc", "tok", 1.05, 20 / 1.05, 20.0, peak_price=1.0, open_mark=1.0, symbol="B"
+    )
+    assert sol_pos is not None and bsc_pos is not None
+    await db.insert_alert("sol", "tok", "signal:12", json.dumps({"symbol": "S"}))
+    await db.insert_alert("bsc", "tok", "signal:12", json.dumps({"symbol": "B"}))
+    await db.bump_reject("sol", "signal", "mc")
+    await db.bump_reject("bsc", "signal", "mc")
+    await db.insert_snapshot(sol_pos, 60, 1.0, position_closed=False)
+
+    deleted = await db.reset_paper_experiment("bsc")
+    assert deleted["paper_positions"] == 1
+    assert deleted["alerts"] == 1
+    assert deleted["reject_counts"] == 1
+
+    # sol untouched — including fills/snapshots tied to sol positions
+    assert await db.get_open_paper("sol", "tok") is not None
+    sol_summary = await db.paper_stats_summary("sol")
+    assert sol_summary["open_count"] == 1
+    bsc_summary = await db.paper_stats_summary("bsc")
+    assert bsc_summary["open_count"] == 0
+    assert await db.get_open_paper("bsc", "tok") is None
+    assert await db.count_open_papers("sol") == 1
+    assert await db.count_open_papers("bsc") == 0
+    assert len(await db.list_recent_alerts(10, chain="sol")) == 1
+    assert len(await db.list_recent_alerts(10, chain="bsc")) == 0
+    cur = await db.conn.execute(
+        "SELECT COUNT(*) AS n FROM paper_fills WHERE position_id=?", (sol_pos,)
+    )
+    assert int((await cur.fetchone())["n"]) >= 1
+    cur = await db.conn.execute(
+        "SELECT COUNT(*) AS n FROM snapshots WHERE position_id=?", (sol_pos,)
+    )
+    assert int((await cur.fetchone())["n"]) == 1
+    await db.close()
+
+
+@pytest.mark.asyncio
 async def test_close_and_partial_sell_noop_after_reset(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     await db.connect()
-    pos = await db.try_open_paper(
+    pos, _ = await db.try_open_paper(
         "sol", "tok", 1.05, 20 / 1.05, 20.0, peak_price=1.0, open_mark=1.0, symbol="T"
     )
     assert pos is not None

@@ -73,3 +73,87 @@ def test_trail_after_stage1():
     o.peak_price = 2.0
     action, reason, _ = o.evaluate(1.4, time.time())  # 30% off peak
     assert action == Action.CLOSE and reason == "trail"
+
+
+def test_pre_stage1_trail_closes_before_stage1_target():
+    o = _order(mark=1.0, buy_slip=0.0, sell_slip=0.0)
+    o.pre_stage1_trail_enable = True
+    o.pre_stage1_trail_activate_pct = 0.15
+    o.pre_stage1_trail_drawdown_pct = 0.40
+    # Pumped to 1.20 (>= open_mark*1.15) but never reached stage1_tp target (1.25).
+    # Pre-stage1 trail threshold = 1.20*(1-0.40) = 0.72, above the hard_stop
+    # threshold of 0.70, so 0.71 trips the trail without also tripping hard_stop.
+    o.note_mark(1.20)
+    action, reason, qty = o.evaluate(0.71, time.time())
+    assert action == Action.CLOSE and reason == "pre_stage1_trail" and qty == o.qty
+
+
+def test_pre_stage1_trail_disabled_by_default():
+    o = _order(mark=1.0, buy_slip=0.0, sell_slip=0.0)
+    o.note_mark(1.20)
+    # hard_stop threshold is 0.70; pick a mark above it but below the pre-stage1 trail
+    # trigger to prove the (disabled) feature does not fire.
+    action, reason, _ = o.evaluate(0.72, time.time())
+    assert action == Action.HOLD and reason is None
+
+
+def test_timeout_extended_when_profitable():
+    o = _order(mark=1.0, buy_slip=0.0, sell_slip=0.0)
+    o.timeout_hours = 2.0
+    o.timeout_extend_if_profitable = True
+    o.timeout_extend_hours = 1.0
+    o.stage1_done = True
+    o.cost_basis = 1.0
+    now = o.opened_at + 2.5 * 3600  # past base timeout, within extended window
+    action, reason, _ = o.evaluate(1.1, now)  # profitable (mark > cost_basis)
+    assert action == Action.HOLD and reason is None
+    later = o.opened_at + 3.5 * 3600  # past extended timeout too
+    action, reason, _ = o.evaluate(1.1, later)
+    assert action == Action.CLOSE and reason == "timeout"
+
+
+def test_timeout_not_extended_when_unprofitable():
+    o = _order(mark=1.0, buy_slip=0.0, sell_slip=0.0)
+    o.timeout_hours = 2.0
+    o.timeout_extend_if_profitable = True
+    o.timeout_extend_hours = 1.0
+    o.stage1_done = True
+    o.cost_basis = 1.0
+    now = o.opened_at + 2.5 * 3600  # past base timeout
+    action, reason, _ = o.evaluate(0.95, now)  # not profitable (mark <= cost_basis)
+    assert action == Action.CLOSE and reason == "timeout"
+
+
+def test_base_timeout_before_stage1_beats_late_stage1_target():
+    """Past base timeout must close even if mark just hit stage1 — no extend rescue."""
+    o = _order(mark=1.0, buy_slip=0.0, sell_slip=0.0)
+    o.timeout_hours = 2.0
+    o.timeout_extend_if_profitable = True
+    o.timeout_extend_hours = 1.0
+    o.stage1_done = False
+    o.cost_basis = 1.0
+    now = o.opened_at + 2.1 * 3600
+    action, reason, qty = o.evaluate(1.30, now)  # would be stage1 if under timeout
+    assert action == Action.CLOSE and reason == "timeout" and qty == o.qty
+
+
+def test_trail_dynamic_tightens_at_high_multiples():
+    o = _order(mark=1.0, buy_slip=0.0, sell_slip=0.0)
+    o.stage1_done = True
+    o.qty = 5
+    o.trail_dynamic = True
+    o.peak_price = 6.0  # peak/open_mark = 6 > 5 -> tightened to 15%
+    # 20% off peak (would NOT trigger the default 30% trail) but exceeds 15% tightened trail
+    action, reason, _ = o.evaluate(4.8, time.time())
+    assert action == Action.CLOSE and reason == "trail"
+
+
+def test_trail_dynamic_disabled_uses_flat_drawdown():
+    o = _order(mark=1.0, buy_slip=0.0, sell_slip=0.0)
+    o.stage1_done = True
+    o.qty = 5
+    o.trail_dynamic = False
+    o.peak_price = 6.0
+    # Same 20% pullback that tightened trail would close, but flat 30% must hold.
+    action, reason, _ = o.evaluate(4.8, time.time())
+    assert action == Action.HOLD and reason is None

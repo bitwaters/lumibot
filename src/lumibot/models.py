@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from lumibot.util import chain_tag
+
 
 class Source(str, Enum):
     SIGNAL = "signal"
@@ -43,12 +45,15 @@ class TokenCandidate:
     holder_count: float | None = None
     top10_rate: float | None = None
     visiting_count: float | None = None
+    volume_1h: float | None = None
     price: float | None = None
     platform: str | None = None
     safety: NormalizedSafety | None = None
     raw: dict[str, Any] = field(default_factory=dict)
     seen_at: float | None = None
     open_timestamp: float | None = None
+    # True when the same token was recently seen on the other source (signal↔trending).
+    dual_source: bool = False
 
     @property
     def source_key(self) -> str:
@@ -58,4 +63,4 @@ class TokenCandidate:
 
     @property
     def chain_tag(self) -> str:
-        return {"sol": "SOL", "bsc": "BSC", "robinhood": "RH"}.get(self.chain, self.chain.upper())
+        return chain_tag(self.chain)

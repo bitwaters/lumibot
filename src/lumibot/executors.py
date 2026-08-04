@@ -12,6 +12,7 @@ from lumibot.exec_types import ExecResult, PaperTradeEvent
 from lumibot.gmgn.client import GmgnClient
 from lumibot.models import TokenCandidate
 from lumibot.strategy import Action, StrategyOrder
+from lumibot.util import mc_from_price_ratio
 
 if TYPE_CHECKING:
     from lumibot.telegram_notify import TelegramNotifier
@@ -51,6 +52,7 @@ class PaperExecutor(Executor):
             logger.warning("paper open skipped: no price chain=%s token=%s", cand.chain, cand.address)
             return ExecResult(status="no_price")
 
+        max_open = self.chain_cfg.execution.limits.max_concurrent_positions
         order = StrategyOrder.open_from_mark(
             chain=cand.chain,
             token=cand.address,
@@ -65,8 +67,14 @@ class PaperExecutor(Executor):
             timeout_hours=self.strategy.timeout_hours,
             stage1_sell_mode=self.strategy.stage1_sell_mode,
             stage1_sell_ratio=self.strategy.stage1_sell_ratio,
+            pre_stage1_trail_enable=self.strategy.pre_stage1_trail_enable,
+            pre_stage1_trail_activate_pct=self.strategy.pre_stage1_trail_activate_pct,
+            pre_stage1_trail_drawdown_pct=self.strategy.pre_stage1_trail_drawdown_pct,
+            timeout_extend_if_profitable=self.strategy.timeout_extend_if_profitable,
+            timeout_extend_hours=self.strategy.timeout_extend_hours,
+            trail_dynamic=self.strategy.trail_dynamic,
         )
-        pos_id = await self.db.try_open_paper(
+        pos_id, skip_reason = await self.db.try_open_paper(
             cand.chain,
             cand.address,
             order.entry_price,
@@ -75,8 +83,22 @@ class PaperExecutor(Executor):
             order.peak_price,
             symbol=cand.symbol,
             open_mark=order.open_mark,
+            max_concurrent=max_open,
         )
-        if pos_id is None:
+        if skip_reason == "max_concurrent":
+            logger.info(
+                "paper_skip_open chain=%s token=%s reason=max_concurrent_positions max=%s",
+                cand.chain,
+                cand.address,
+                max_open,
+            )
+            return ExecResult(
+                status="blocked_max_positions",
+                mark=mark,
+                open_mark=mark,
+                hard_stop_pct=self.strategy.hard_stop_pct,
+            )
+        if skip_reason == "already_open" or pos_id is None:
             logger.info(
                 "paper_skip_open chain=%s token=%s reason=already_open",
                 cand.chain,
@@ -127,7 +149,15 @@ class PaperExecutor(Executor):
             await self._write_snapshots(int(row["id"]), due_missing, mark, closed=True)
 
     async def _manage_one(self, row, now: float) -> None:
-        mark = await self.client.get_price(row["chain"], row["token"], self.price_source)
+        # Fetch price + market_cap in one call; reuse for both strategy evaluation
+        # and exit-MC card fields, avoiding a redundant uncached API request on close.
+        try:
+            mark, mark_mc = await self.client.get_price_and_market_cap(
+                row["chain"], row["token"], self.price_source
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("manage_one quote failed chain=%s token=%s", row["chain"], row["token"])
+            return
         if mark is None or mark <= 0:
             return
         keys = row.keys()
@@ -151,6 +181,12 @@ class PaperExecutor(Executor):
             timeout_hours=self.strategy.timeout_hours,
             stage1_sell_mode=self.strategy.stage1_sell_mode,
             stage1_sell_ratio=self.strategy.stage1_sell_ratio,
+            pre_stage1_trail_enable=self.strategy.pre_stage1_trail_enable,
+            pre_stage1_trail_activate_pct=self.strategy.pre_stage1_trail_activate_pct,
+            pre_stage1_trail_drawdown_pct=self.strategy.pre_stage1_trail_drawdown_pct,
+            timeout_extend_if_profitable=self.strategy.timeout_extend_if_profitable,
+            timeout_extend_hours=self.strategy.timeout_extend_hours,
+            trail_dynamic=self.strategy.trail_dynamic,
         )
         action, reason, sell_qty = order.evaluate(mark, now)
         if order.peak_price != row["peak_price"]:
@@ -184,6 +220,7 @@ class PaperExecutor(Executor):
                 open_mark,
                 float(order.peak_price),
                 fill_mark=mark,
+                prefetch=(mark, mark_mc),
             )
             await self._notify_event(
                 PaperTradeEvent(
@@ -235,6 +272,7 @@ class PaperExecutor(Executor):
                 open_mark,
                 float(order.peak_price),
                 fill_mark=mark,
+                prefetch=(mark, mark_mc),
             )
             await self._notify_event(
                 PaperTradeEvent(
@@ -269,18 +307,26 @@ class PaperExecutor(Executor):
         peak_price: float,
         *,
         fill_mark: float,
+        prefetch: tuple[float | None, float | None] | None = None,
     ) -> tuple[float | None, float | None, float | None]:
-        """Display MC after fills. Scale entry/peak/exit off one quote snapshot using fill_mark for exit."""
-        try:
-            quote_px, mark_mc = await self.client.get_price_and_market_cap(
-                chain, token, self.price_source
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("exit quote failed chain=%s token=%s", chain, token)
-            return None, None, None
-        entry_mc = _mc_from_price_ratio(mark_mc, quote_px, open_mark)
-        peak_mc = _mc_from_price_ratio(mark_mc, quote_px, peak_price)
-        exit_mc = _mc_from_price_ratio(mark_mc, quote_px, fill_mark)
+        """Display MC after fills. Scale entry/peak/exit off one quote snapshot using fill_mark for exit.
+
+        If prefetch=(quote_px, mark_mc) is provided (e.g. from _manage_one's opening quote),
+        it is reused directly to avoid a second uncached API call within the same management tick.
+        """
+        if prefetch is not None:
+            quote_px, mark_mc = prefetch
+        else:
+            try:
+                quote_px, mark_mc = await self.client.get_price_and_market_cap(
+                    chain, token, self.price_source
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("exit quote failed chain=%s token=%s", chain, token)
+                return None, None, None
+        entry_mc = mc_from_price_ratio(mark_mc, quote_px, open_mark)
+        peak_mc = mc_from_price_ratio(mark_mc, quote_px, peak_price)
+        exit_mc = mc_from_price_ratio(mark_mc, quote_px, fill_mark)
         return entry_mc, exit_mc, peak_mc
 
     async def _notify_event(self, ev: PaperTradeEvent) -> None:
@@ -302,18 +348,14 @@ class PaperExecutor(Executor):
             await self.db.insert_snapshot(position_id, offset, mark, closed)
 
 
-def _mc_from_price_ratio(
-    mark_mc: float | None, mark_price: float | None, ref_price: float | None
-) -> float | None:
-    if mark_mc is None or mark_price is None or ref_price is None:
-        return None
-    if mark_price <= 0 or ref_price <= 0:
-        return None
-    return mark_mc * (ref_price / mark_price)
-
-
 class LiveExecutor(Executor):
-    """P0 stub: never submits real orders; never loads private keys."""
+    """Live trading stub — intentionally non-functional (U1 / Paper-first).
+
+    Never submits real orders, never loads private keys or wallet material, and
+    has no manage_open_positions loop. Enabling ``execution.mode: live`` only
+    runs risk-limit checks then returns ``noop`` / ``blocked_live``. Real DEX
+    routing (Jupiter/Raydium/etc.) is out of scope until a dedicated Live change.
+    """
 
     def __init__(self, db: Database, app_cfg: AppConfig, chain: str, chain_cfg: ChainCfg) -> None:
         self.db = db

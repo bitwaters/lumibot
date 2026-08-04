@@ -17,8 +17,8 @@ def test_trending_window_is_1m():
     cfg = load_app_config("config/chains.yaml")
     assert cfg.chains["sol"].sources.trending.window == "1m"
     assert cfg.chains["bsc"].sources.trending.window == "1m"
-    assert cfg.strategy.loss_cooldown_min == 180
-    assert cfg.strategy.post_close_cooldown_min == 45
+    assert cfg.chains["sol"].strategy.loss_cooldown_min == 180
+    assert cfg.chains["sol"].strategy.post_close_cooldown_min == 45
 
 
 def test_mc_extension_soft_vs_enforce():
@@ -90,7 +90,7 @@ async def test_loss_row_blocks_admission(tmp_path):
 async def test_close_arms_loss_and_post_close(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     await db.connect()
-    pos_id = await db.try_open_paper(
+    pos_id, _ = await db.try_open_paper(
         "sol", "tok", 1.05, 20 / 1.05, 20.0, peak_price=1.0, open_mark=1.0
     )
     assert pos_id is not None
@@ -112,7 +112,7 @@ async def test_close_arms_loss_and_post_close(tmp_path):
 async def test_duration_zero_disables_arming(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     await db.connect()
-    pos_id = await db.try_open_paper(
+    pos_id, _ = await db.try_open_paper(
         "sol", "tok2", 1.05, 20 / 1.05, 20.0, peak_price=1.0, open_mark=1.0
     )
     assert pos_id is not None
@@ -134,7 +134,7 @@ async def test_duration_zero_disables_arming(tmp_path):
 async def test_abort_does_not_arm_reentry(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     await db.connect()
-    pos_id = await db.try_open_paper(
+    pos_id, _ = await db.try_open_paper(
         "sol", "abort", 1.05, 20 / 1.05, 20.0, peak_price=1.0, open_mark=1.0
     )
     assert pos_id is not None
@@ -182,7 +182,7 @@ async def test_acquire_recheck_releases_on_loss(tmp_path):
 
     async def acquire_then_arm_loss(*args, **kwargs):
         ok = await orig_acquire(*args, **kwargs)
-        if ok:
+        if ok is None:  # None = successfully acquired
             now = time.time()
             await db.conn.execute(
                 """

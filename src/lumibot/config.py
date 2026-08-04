@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+import copy
+import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
+
+# Chain -> required safety_profile binding, enforced at load time.
+PROFILE_BY_CHAIN: dict[str, str] = {
+    "sol": "sol_v1",
+    "bsc": "evm_v1",
+    "robinhood": "evm_v1",
+}
 
 
 class QuoteToken(BaseModel):
@@ -36,6 +47,8 @@ class SourceTrendingCfg(BaseModel):
 class SourcesCfg(BaseModel):
     signal: SourceSignalCfg = Field(default_factory=SourceSignalCfg)
     trending: SourceTrendingCfg = Field(default_factory=SourceTrendingCfg)
+    # Optional second trending loop (e.g. window=5m) run alongside `trending`.
+    trending_5m: SourceTrendingCfg | None = None
 
 
 class FiltersCfg(BaseModel):
@@ -46,6 +59,10 @@ class FiltersCfg(BaseModel):
     top10_max: float
     holders_min: float
     visiting_min: float
+    # If set, trending candidates use this threshold instead of visiting_min.
+    visiting_min_trending: float | None = None
+    volume_1h_min: float = 0           # 0 = disabled
+    volume_mc_ratio_min: float = 0     # volume_1h/mc ratio; 0 = disabled
     age_min_sec: int = 0    # reject tokens younger than this; 0 = disabled
     age_max_sec: int = 0    # reject tokens older than this; 0 = disabled
     max_mc_extension: float = 2.0
@@ -57,6 +74,9 @@ class SafetyThresholds(BaseModel):
     bundler_max: float = 0.3
     rat_max: float = 0.3
     tax_max: float = 0.05
+    # When True, missing (None) safety fields that would otherwise be tolerated
+    # (e.g. sol_v1 honeypot) are treated as a hard fail instead of being ignored.
+    strict_missing: bool = False
 
 
 class CooldownCfg(BaseModel):
@@ -68,6 +88,7 @@ class ExecLimits(BaseModel):
     max_notional_usd: float = 20
     daily_loss_usd: float = 50
     daily_trades: int = 10
+    max_concurrent_positions: int = 0  # 0 = unlimited
 
 
 class ExecutionCfg(BaseModel):
@@ -76,6 +97,29 @@ class ExecutionCfg(BaseModel):
     slippage_buy_pct: float = 0.05
     slippage_sell_pct: float = 0.05
     limits: ExecLimits = Field(default_factory=ExecLimits)
+
+
+class StrategyCfg(BaseModel):
+    notional_usd: float = 20
+    hard_stop_pct: float = -0.30
+    stage1_tp_pct: float = 0.25
+    trail_drawdown_pct: float = 0.30
+    timeout_hours: float = 2
+    stage1_sell_mode: str = "notional"  # notional | ratio
+    stage1_sell_ratio: float = 0.50     # used when stage1_sell_mode == "ratio"
+    snapshots_sec: list[int] = Field(default_factory=lambda: [60, 300, 900, 3600])
+    loss_cooldown_min: int = 180
+    post_close_cooldown_min: int = 45
+    # Pre-stage1 trail: protects unrealized profit if price pumps then dumps
+    # before ever reaching stage1_tp_pct.
+    pre_stage1_trail_enable: bool = False
+    pre_stage1_trail_activate_pct: float = 0.15
+    pre_stage1_trail_drawdown_pct: float = 0.40
+    # Give a profitable (post-stage1) position extra runway before timing out.
+    timeout_extend_if_profitable: bool = False
+    timeout_extend_hours: float = 1.0
+    # Tighten the post-stage1 trail drawdown as the peak/open_mark multiple grows.
+    trail_dynamic: bool = True
 
 
 class ChainCfg(BaseModel):
@@ -89,6 +133,8 @@ class ChainCfg(BaseModel):
     safety: SafetyThresholds = Field(default_factory=SafetyThresholds)
     cooldown: CooldownCfg = Field(default_factory=CooldownCfg)
     execution: ExecutionCfg = Field(default_factory=ExecutionCfg)
+    # Sole source of truth for exit/notional behaviour; each chain owns its own block.
+    strategy: StrategyCfg
 
     @model_validator(mode="after")
     def gate_enabled_calibrated(self) -> ChainCfg:
@@ -109,25 +155,15 @@ class GlobalCfg(BaseModel):
     live_master_switch: bool = False
     rate_limit: RateLimitCfg = Field(default_factory=RateLimitCfg)
     enrichment_cache_ttl_sec: int = 300
+    security_cache_ttl_sec: int = 3600
     price_source: str = "token_info"
-
-
-class StrategyCfg(BaseModel):
-    notional_usd: float = 20
-    hard_stop_pct: float = -0.30
-    stage1_tp_pct: float = 0.25
-    trail_drawdown_pct: float = 0.30
-    timeout_hours: float = 2
-    stage1_sell_mode: str = "notional"  # notional | ratio
-    stage1_sell_ratio: float = 0.50     # used when stage1_sell_mode == "ratio"
-    snapshots_sec: list[int] = Field(default_factory=lambda: [60, 300, 900, 3600])
-    loss_cooldown_min: int = 180
-    post_close_cooldown_min: int = 45
 
 
 class AppConfig(BaseModel):
     global_: GlobalCfg = Field(alias="global")
-    strategy: StrategyCfg = Field(default_factory=StrategyCfg)
+    # Legacy-only: no longer read at runtime. Kept so old yaml files still parse;
+    # load_app_config() warns and ignores it (see PROFILE_BY_CHAIN / chain strategy copy).
+    strategy: StrategyCfg | None = None
     chains: dict[str, ChainCfg]
 
     model_config = {"populate_by_name": True}
@@ -147,21 +183,53 @@ class Settings(BaseSettings):
         ids: list[int] = []
         for part in self.telegram_chat_ids.split(","):
             part = part.strip()
-            if part:
+            if not part:
+                continue
+            try:
                 ids.append(int(part))
+            except ValueError as exc:
+                raise ValueError(
+                    f"invalid TELEGRAM_CHAT_IDS entry {part!r}: expected a comma-separated "
+                    "list of integer chat ids"
+                ) from exc
         return ids
 
 
 def load_app_config(path: str | Path) -> AppConfig:
     raw = Path(path).read_text(encoding="utf-8")
     data: dict[str, Any] = yaml.safe_load(raw) or {}
-    # Validate each enabled chain with a clear chain name
+
+    top_level_strategy = data.get("strategy")
+    if top_level_strategy is not None:
+        logger.warning(
+            "config: top-level 'strategy' is deprecated and ignored at runtime; "
+            "define it under each chains.<name>.strategy block instead"
+        )
+
     chains = data.get("chains") or {}
     for name, cfg in chains.items():
+        if not isinstance(cfg, dict):
+            raise ValueError(f"invalid config for chain {name}: expected a mapping")
+        if cfg.get("strategy") is None:
+            if top_level_strategy is not None:
+                cfg["strategy"] = copy.deepcopy(top_level_strategy)
+            else:
+                raise ValueError(
+                    f"invalid config for chain {name}: missing required 'strategy' block "
+                    "(chains.<name>.strategy) and no legacy top-level 'strategy' to fall back on"
+                )
         try:
-            ChainCfg.model_validate(cfg)
+            chain_cfg = ChainCfg.model_validate(cfg)
         except Exception as exc:  # noqa: BLE001
             raise ValueError(f"invalid config for chain {name}: {exc}") from exc
+
+        expected_profile = PROFILE_BY_CHAIN.get(name)
+        if expected_profile is not None and chain_cfg.safety_profile != expected_profile:
+            raise ValueError(
+                f"invalid config for chain {name}: safety_profile must be "
+                f"{expected_profile!r} for this chain, got {chain_cfg.safety_profile!r}"
+            )
+
     return AppConfig.model_validate(data)
 
 

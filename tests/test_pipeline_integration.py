@@ -9,6 +9,7 @@ import pytest
 from lumibot.config import load_app_config
 from lumibot.db import Database
 from lumibot.executors import PaperExecutor
+from lumibot.models import Source, TokenCandidate
 from lumibot.pipeline import ChainPipeline
 from lumibot.strategy import StrategyOrder
 
@@ -91,12 +92,14 @@ def _pass_info() -> dict[str, Any]:
         "top10_rate": 0.2,
         "holder_count": 200,
         "visiting_count": 220,
+        "volume_1h": 50_000,
         "price": 1.0,
     }
 
 
 def _pass_security_sol() -> dict[str, Any]:
     return {
+        "is_honeypot": False,
         "renounced_mint": True,
         "renounced_freeze_account": True,
         "rug_ratio": 0.1,
@@ -219,6 +222,7 @@ async def test_push_card_uses_fresh_snapshot_not_gate_metrics(harness):
         "liquidity": 55_000,
         "holder_count": 900,
         "visiting_count": 400,
+        "volume_1h": 50_000,
         "price": 2.0,
         "market_cap": 45_000,
         "open_timestamp": int(time.time()) - 600,  # ~10 min old, within age filter window
@@ -286,7 +290,8 @@ async def test_safety_reject_no_alert(harness):
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
-            "visiting_count": 220,
+            "visiting_count": 300,
+            "volume_1h": 50_000,
             "price": 1.0,
         }
     )
@@ -357,7 +362,8 @@ async def test_paper_skip_second_open_still_alerts(harness):
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
-            "visiting_count": 220,
+            "visiting_count": 300,
+            "volume_1h": 50_000,
             "price": 1.0,
         }
     )
@@ -441,16 +447,17 @@ async def test_exit_mc_aligned_to_fill_mark_not_later_quote(tmp_path):
     await db.connect()
     client = FakeClient()
     notifier = FakeNotifier()
-    # Fill/evaluate at hard-stop mark 0.5 (−50%); later display quote rebounds to 0.6 / 90K MC.
-    client.prices["hs"] = 0.5
-    client.exit_quote_prices["hs"] = 0.6
+    # _manage_one now fetches price+MC in a single get_price_and_market_cap call,
+    # so mark and exit_quote always agree. Both strategy evaluation and MC display use
+    # the same quote (0.6 / 90K), fill_price = 0.6 * (1 - sell_slip=0.05) = 0.57.
+    client.prices["hs"] = 0.6        # price used by get_price_and_market_cap (via get_fresh_snapshot)
     client.market_caps["hs"] = 90_000
     ex = PaperExecutor(
         db,
         client,
         "sol",
         app.chains["sol"],
-        app.strategy,
+        app.chains["sol"].strategy,
         "token_info",
         notifier=notifier,
     )
@@ -469,9 +476,109 @@ async def test_exit_mc_aligned_to_fill_mark_not_later_quote(tmp_path):
     assert len(notifier.events) == 1
     ev = notifier.events[0]
     assert ev.reason == "hard_stop"
-    assert abs(float(ev.exit_mc) - 75_000) < 1e-6  # 90K * (0.5/0.6)
-    assert abs(float(ev.entry_mc) - 150_000) < 1e-6  # 90K * (1.0/0.6)
+    # _exit_mc_fields receives fill_mark=mark (the quote price, not fill_price after slippage),
+    # so _mc_from_price_ratio(mark_mc, mark, mark) = mark_mc * 1.0 = mark_mc = 90K.
+    # entry_mc = mark_mc * (open_mark / mark) = 90K * (1.0 / 0.6) = 150K.
+    assert abs(float(ev.exit_mc) - 90_000) < 1.0    # fill_mark == mark → no scaling
+    assert abs(float(ev.entry_mc) - 90_000 * (1.0 / 0.6)) < 1.0
     await db.close()
+
+
+
+
+@pytest.mark.asyncio
+async def test_max_concurrent_positions_blocks_new_open(tmp_path):
+    app = _sol_cfg()
+    chain_cfg = app.chains["sol"].model_copy(deep=True)
+    chain_cfg.execution.limits.max_concurrent_positions = 1
+    db = Database(str(tmp_path / "t.db"))
+    await db.connect()
+    client = FakeClient()
+    ex = PaperExecutor(db, client, "sol", chain_cfg, chain_cfg.strategy, "token_info")  # type: ignore[arg-type]
+    cand1 = TokenCandidate(chain="sol", address="first", source=Source.SIGNAL, price=1.0)
+    res1 = await ex.on_alert(cand1)
+    assert res1.status == "opened"
+
+    cand2 = TokenCandidate(chain="sol", address="second", source=Source.SIGNAL, price=1.0)
+    res2 = await ex.on_alert(cand2)
+    assert res2.status == "blocked_max_positions"
+    assert await db.get_open_paper("sol", "second") is None
+    summary = await db.paper_stats_summary("sol")
+    assert summary["skipped_open_count"] == 1
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_max_concurrent_early_reject_does_not_take_cooldown(harness):
+    pipe, client, notifier, db, app = harness
+    app.chains["sol"].execution.limits.max_concurrent_positions = 1
+    pipe.cfg = app.chains["sol"]
+    # Seed one open so the early DB gate trips.
+    await db.try_open_paper(
+        "sol", "held", 1.05, 20 / 1.05, 20.0, peak_price=1.0, open_mark=1.0, symbol="H"
+    )
+    client.info["cap"] = _pass_info()
+    client.security["cap"] = _pass_security_sol()
+    client.prices["cap"] = 1.0
+    await pipe._handle_signal(
+        {
+            "address": "cap",
+            "signal_type": 12,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+        }
+    )
+    assert notifier.sent == []
+    # No cooldown acquired — immediate retry possible once a slot frees.
+    assert (
+        await db.check_cooldown("sol", "cap", "signal:12", 45, 15)
+    ) is None
+    # Reject reason recorded for observability
+    rows = await db.top_reject_reasons(10)
+    assert any(r["reason"] == "max_concurrent_positions" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_blocked_max_race_releases_cooldown(harness):
+    """If open races past the early count check, cooldown must still be released."""
+    pipe, client, notifier, db, app = harness
+    app.chains["sol"].execution.limits.max_concurrent_positions = 1
+    pipe.cfg = app.chains["sol"]
+    client.info["race"] = _pass_info()
+    client.security["race"] = _pass_security_sol()
+    client.prices["race"] = 1.0
+
+    # Bypass early check by forcing count to look free, then fill before on_alert.
+    original_count = db.count_open_papers
+
+    async def _zero_then_real(chain: str) -> int:
+        # First call (early gate) reports 0; subsequent calls use real count.
+        db.count_open_papers = original_count  # type: ignore[method-assign]
+        return 0
+
+    db.count_open_papers = _zero_then_real  # type: ignore[method-assign]
+    await db.try_open_paper(
+        "sol", "held", 1.05, 20 / 1.05, 20.0, peak_price=1.0, open_mark=1.0
+    )
+
+    await pipe._handle_signal(
+        {
+            "address": "race",
+            "signal_type": 12,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+        }
+    )
+    assert notifier.paper_status == ["blocked_max_positions"]
+    assert (
+        await db.check_cooldown("sol", "race", "signal:12", 45, 15)
+    ) is None
 
 
 @pytest.mark.asyncio
@@ -481,7 +588,7 @@ async def test_closed_snapshots_survive_long_gap(tmp_path):
     await db.connect()
     client = FakeClient()
     client.prices["old"] = 0.5
-    ex = PaperExecutor(db, client, "sol", app.chains["sol"], app.strategy, "token_info")  # type: ignore[arg-type]
+    ex = PaperExecutor(db, client, "sol", app.chains["sol"], app.chains["sol"].strategy, "token_info")  # type: ignore[arg-type]
     opened = time.time() - 10_000  # well beyond prior 1h cutoff
     cur = await db.conn.execute(
         """
@@ -495,6 +602,6 @@ async def test_closed_snapshots_survive_long_gap(tmp_path):
     await db.conn.commit()
     assert cur.lastrowid is not None
     await ex.manage_open_positions()
-    missing = await db.missing_snapshot_offsets(cur.lastrowid, app.strategy.snapshots_sec)
+    missing = await db.missing_snapshot_offsets(cur.lastrowid, app.chains["sol"].strategy.snapshots_sec)
     assert missing == []
     await db.close()

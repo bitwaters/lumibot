@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import time
 from typing import Any
 
-from lumibot.config import AppConfig, ChainCfg
+from lumibot.config import AppConfig, ChainCfg, SourceTrendingCfg
 from lumibot.db import Database
 from lumibot.executors import Executor, LiveExecutor, PaperExecutor
 from lumibot.filters import (
@@ -45,6 +46,9 @@ class ChainPipeline:
         self.notifier = notifier
         self._tasks: list[asyncio.Task] = []
         self._stop = asyncio.Event()
+        # Recent source sightings for dual-source (signal↔trending) within TTL.
+        self._recent_sources: dict[str, dict[str, float]] = {}
+        self._dual_source_ttl_sec = 30.0
         self.executor: Executor
         if chain_cfg.execution.mode == "live":
             self.executor = LiveExecutor(db, app_cfg, chain, chain_cfg)
@@ -54,7 +58,7 @@ class ChainPipeline:
                 client,
                 chain,
                 chain_cfg,
-                app_cfg.strategy,
+                chain_cfg.strategy,
                 app_cfg.global_.price_source,
                 notifier=notifier,
             )
@@ -63,7 +67,18 @@ class ChainPipeline:
         if self.cfg.sources.signal.enabled:
             self._tasks.append(asyncio.create_task(self._loop_signal(), name=f"{self.chain}-signal"))
         if self.cfg.sources.trending.enabled:
-            self._tasks.append(asyncio.create_task(self._loop_trending(), name=f"{self.chain}-trending"))
+            self._tasks.append(
+                asyncio.create_task(
+                    self._loop_trending(self.cfg.sources.trending), name=f"{self.chain}-trending"
+                )
+            )
+        trending_5m = self.cfg.sources.trending_5m
+        if trending_5m is not None and trending_5m.enabled:
+            self._tasks.append(
+                asyncio.create_task(
+                    self._loop_trending(trending_5m), name=f"{self.chain}-trending-5m"
+                )
+            )
         if isinstance(self.executor, PaperExecutor):
             self._tasks.append(asyncio.create_task(self._loop_manage(), name=f"{self.chain}-manage"))
 
@@ -88,9 +103,9 @@ class ChainPipeline:
                 logger.exception("signal poll failed chain=%s", self.chain)
             await self._sleep(interval)
 
-    async def _loop_trending(self) -> None:
-        interval = self.cfg.sources.trending.interval_sec
-        window = self.cfg.sources.trending.window
+    async def _loop_trending(self, cfg: SourceTrendingCfg) -> None:
+        interval = cfg.interval_sec
+        window = cfg.window
         while not self._stop.is_set():
             try:
                 if await self.client.limiter.available() < 4:
@@ -108,6 +123,8 @@ class ChainPipeline:
 
     async def _loop_manage(self) -> None:
         assert isinstance(self.executor, PaperExecutor)
+        # Randomise initial delay so multiple chains don't all fire at t=0
+        await self._sleep(random.uniform(0, 5))
         while not self._stop.is_set():
             try:
                 await self.executor.manage_open_positions()
@@ -115,13 +132,36 @@ class ChainPipeline:
                 raise
             except Exception:  # noqa: BLE001
                 logger.exception("paper manage failed chain=%s", self.chain)
-            await self._sleep(15)
+            # Add jitter to spread requests across chains
+            await self._sleep(15 + random.uniform(0, 3))
 
     async def _sleep(self, sec: float) -> None:
         try:
             await asyncio.wait_for(self._stop.wait(), timeout=sec)
         except asyncio.TimeoutError:
             return
+
+    def _mark_dual_source(self, cand: TokenCandidate) -> None:
+        """Record this sighting and set cand.dual_source if the other source hit recently."""
+        now = time.time()
+        ttl = self._dual_source_ttl_sec
+        # Prune expired entries opportunistically
+        stale_addrs = []
+        for addr, bucket in self._recent_sources.items():
+            alive = {src: ts for src, ts in bucket.items() if now - ts < ttl}
+            if alive:
+                self._recent_sources[addr] = alive
+            else:
+                stale_addrs.append(addr)
+        for addr in stale_addrs:
+            del self._recent_sources[addr]
+
+        src = cand.source.value  # "signal" | "trending"
+        other = "trending" if src == "signal" else "signal"
+        bucket = self._recent_sources.setdefault(cand.address, {})
+        other_ts = bucket.get(other)
+        cand.dual_source = other_ts is not None and (now - other_ts) < ttl
+        bucket[src] = now
 
     async def _handle_signal(self, raw: dict[str, Any]) -> None:
         seen_at = time.time()
@@ -149,6 +189,7 @@ class ChainPipeline:
             holder_count=fields["holder_count"],
             top10_rate=fields["top10_rate"],
             visiting_count=None,
+            volume_1h=fields["volume_1h"],
             price=fields["price"],
             platform=extract_platform(raw),
             raw=raw,
@@ -174,6 +215,7 @@ class ChainPipeline:
             holder_count=fields["holder_count"],
             top10_rate=fields["top10_rate"],
             visiting_count=fields["visiting_count"],
+            volume_1h=fields["volume_1h"],
             price=fields["price"],
             platform=extract_platform(raw),
             raw=raw,
@@ -213,6 +255,35 @@ class ChainPipeline:
         return None, None, {}
 
     async def _enrich_and_process(self, cand: TokenCandidate, *, need_visiting_from_info: bool) -> None:
+        self._mark_dual_source(cand)
+
+        # --- Fast-path DB checks BEFORE any API calls ---
+        # This avoids burning rate-limit tokens on tokens already blocked by cooldown,
+        # which happens every 5 s for the entire 45-min cooldown window.
+        block = await self.db.has_reentry_block(cand.chain, cand.address)
+        if block == "loss":
+            await self._reject(cand, "loss_cooldown")
+            return
+        if block == "post_close":
+            await self._reject(cand, "post_close_cooldown")
+            return
+
+        max_open = self.cfg.execution.limits.max_concurrent_positions
+        if max_open > 0 and await self.db.count_open_papers(self.chain) >= max_open:
+            # Reject without acquiring cooldown so a free slot can be used immediately.
+            await self._reject(cand, "max_concurrent_positions")
+            return
+
+        cooldown_reason = await self.db.check_cooldown(
+            cand.chain, cand.address, cand.source_key,
+            self.cfg.cooldown.same_type_min,
+            self.cfg.cooldown.cross_source_min,
+        )
+        if cooldown_reason is not None:
+            await self._reject(cand, cooldown_reason)
+            return
+
+        # --- API enrichment (after cheap DB gates pass) ---
         needs_info = need_visiting_from_info or any(
             v is None
             for v in (cand.market_cap, cand.liquidity, cand.top10_rate, cand.holder_count, cand.price)
@@ -263,23 +334,16 @@ class ChainPipeline:
         if ext.soft:
             await self.db.bump_reject(cand.chain, cand.source.value, ext.reason or "mc_extension_soft")
 
-        block = await self.db.has_reentry_block(cand.chain, cand.address)
-        if block == "loss":
-            await self._reject(cand, "loss_cooldown")
-            return
-        if block == "post_close":
-            await self._reject(cand, "post_close_cooldown")
-            return
-
-        acquired = await self.db.try_acquire_cooldown(
+        # --- Atomic cooldown acquire + TOCTOU re-check ---
+        cooldown_reason = await self.db.try_acquire_cooldown(
             cand.chain,
             cand.address,
             cand.source_key,
             self.cfg.cooldown.same_type_min,
             self.cfg.cooldown.cross_source_min,
         )
-        if not acquired:
-            await self._reject(cand, "cooldown")
+        if cooldown_reason is not None:
+            await self._reject(cand, cooldown_reason)
             return
 
         block = await self.db.has_reentry_block(cand.chain, cand.address)
@@ -297,11 +361,13 @@ class ChainPipeline:
         # Push card + open_mark share this uncached snapshot (not gate/enrich cache).
         apply_push_snapshot(cand, info, price=price, market_cap=mc)
 
+
         text_payload: dict[str, Any] = {
             "chain": cand.chain,
             "address": cand.address,
             "source": cand.source_key,
             "symbol": cand.symbol,
+            "dual_source": cand.dual_source,
         }
         if cand.open_timestamp is not None:
             text_payload["open_timestamp"] = cand.open_timestamp
@@ -312,6 +378,10 @@ class ChainPipeline:
             await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
             await self._reject(cand, "no_price")
             return
+        if exec_result.status == "blocked_max_positions":
+            # Race: slot filled between early check and open. Free cooldown so a
+            # later free slot can be used; still push so operators see the cap hit.
+            await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
         send_ts = time.time()
         latency_sec = (send_ts - cand.seen_at) if cand.seen_at is not None else None
         text_payload["ts"] = send_ts
@@ -363,12 +433,34 @@ class ChainPipeline:
 
     async def _reject(self, cand: TokenCandidate, reason: str) -> None:
         await self.db.bump_reject(cand.chain, cand.source.value, reason)
+        try:
+            payload = json.dumps(
+                {
+                    "symbol": cand.symbol,
+                    "source_key": cand.source_key,
+                    "dual_source": cand.dual_source,
+                    "market_cap": cand.market_cap,
+                    "platform": cand.platform,
+                },
+                ensure_ascii=False,
+            )
+            await self.db.insert_signal_log(
+                cand.chain, cand.address, cand.source.value, reason, payload
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "signal_log_failed chain=%s token=%s reason=%s",
+                cand.chain,
+                cand.address,
+                reason,
+            )
         logger.info(
-            "reject chain=%s source=%s token=%s reason=%s",
+            "reject chain=%s source=%s token=%s reason=%s dual=%s",
             cand.chain,
             cand.source.value,
             cand.address,
             reason,
+            cand.dual_source,
         )
 
 

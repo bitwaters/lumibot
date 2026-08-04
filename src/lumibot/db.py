@@ -93,9 +93,20 @@ CREATE TABLE IF NOT EXISTS paper_skip_opens (
   created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS signal_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chain TEXT NOT NULL,
+  token TEXT NOT NULL,
+  source TEXT NOT NULL,
+  reason TEXT,
+  payload_json TEXT,
+  created_at REAL NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_cooldowns_token ON cooldowns(chain, token, until_ts);
 CREATE INDEX IF NOT EXISTS idx_paper_status ON paper_positions(chain, status);
 CREATE INDEX IF NOT EXISTS idx_snapshots_pos ON snapshots(position_id);
+CREATE INDEX IF NOT EXISTS idx_signal_log_chain ON signal_log(chain, created_at);
 """
 
 
@@ -167,6 +178,34 @@ class Database:
         async with self._write_lock:
             return await fn()
 
+    async def check_cooldown(
+        self,
+        chain: str,
+        token: str,
+        source_key: str,
+        same_type_min: int,  # noqa: ARG002 — kept for symmetric signature
+        cross_source_min: int,  # noqa: ARG002
+    ) -> str | None:
+        """Read-only cooldown pre-check (no writes). Returns None if the token is NOT blocked,
+        or a reject-reason string ('cooldown_same_type' | 'cooldown_cross_source') if blocked.
+
+        Used as a fast-path gate before expensive API calls.  The result is advisory:
+        try_acquire_cooldown must still be called to atomically claim the slot.
+        """
+        now = time.time()
+        cur = await self.conn.execute(
+            "SELECT kind FROM cooldowns WHERE chain=? AND token=? AND until_ts>? LIMIT 10",
+            (chain, token, now),
+        )
+        rows = await cur.fetchall()
+        for row in rows:
+            kind = row["kind"]
+            if kind == source_key:
+                return "cooldown_same_type"
+            if kind == "cross":
+                return "cooldown_cross_source"
+        return None
+
     async def try_acquire_cooldown(
         self,
         chain: str,
@@ -174,13 +213,15 @@ class Database:
         source_key: str,
         same_type_min: int,
         cross_source_min: int,
-    ) -> bool:
-        """Atomically check+occupy same-type and cross-source cooldowns. True if allowed."""
+    ) -> str | None:
+        """Atomically check+occupy same-type and cross-source cooldowns.
+        Returns None if acquired (allowed), or a reject-reason string if blocked.
+        """
         now = time.time()
         same_until = now + same_type_min * 60
         cross_until = now + cross_source_min * 60
 
-        async def _tx() -> bool:
+        async def _tx() -> str | None:
             await self.conn.execute("BEGIN IMMEDIATE")
             try:
                 cur = await self.conn.execute(
@@ -190,9 +231,12 @@ class Database:
                 rows = await cur.fetchall()
                 for row in rows:
                     kind = row["kind"]
-                    if kind == source_key or kind == "cross":
+                    if kind == source_key:
                         await self.conn.commit()
-                        return False
+                        return "cooldown_same_type"
+                    if kind == "cross":
+                        await self.conn.commit()
+                        return "cooldown_cross_source"
                 await self.conn.execute(
                     """
                     INSERT INTO cooldowns(chain, token, kind, until_ts) VALUES(?,?,?,?)
@@ -208,7 +252,7 @@ class Database:
                     (chain, token, "cross", cross_until),
                 )
                 await self.conn.commit()
-                return True
+                return None
             except Exception:
                 await self.conn.rollback()
                 raise
@@ -302,12 +346,18 @@ class Database:
         peak_price: float,
         symbol: str | None = None,
         open_mark: float | None = None,
-    ) -> int | None:
-        """Atomic check+open. Returns position id or None if already open."""
+        max_concurrent: int = 0,
+    ) -> tuple[int | None, str | None]:
+        """Atomic check+open.
+
+        Returns ``(position_id, None)`` on success, or
+        ``(None, "already_open"|"max_concurrent")`` when skipped (and records
+        a ``paper_skip_opens`` row in both skip cases).
+        """
         now = time.time()
         mark = peak_price if open_mark is None else open_mark
 
-        async def _tx() -> int | None:
+        async def _tx() -> tuple[int | None, str | None]:
             await self.conn.execute("BEGIN IMMEDIATE")
             try:
                 cur = await self.conn.execute(
@@ -316,13 +366,28 @@ class Database:
                 )
                 existing = await cur.fetchone()
                 if existing:
-                    # Same write path as the open decision — not dependent on alerts/TG.
                     await self.conn.execute(
                         "INSERT INTO paper_skip_opens(chain, token, created_at) VALUES(?,?,?)",
                         (chain, token, now),
                     )
                     await self.conn.commit()
-                    return None
+                    return None, "already_open"
+
+                if max_concurrent > 0:
+                    cur = await self.conn.execute(
+                        "SELECT COUNT(*) AS c FROM paper_positions WHERE status='open' AND chain=?",
+                        (chain,),
+                    )
+                    row = await cur.fetchone()
+                    open_count = int(row["c"] if row else 0)
+                    if open_count >= max_concurrent:
+                        await self.conn.execute(
+                            "INSERT INTO paper_skip_opens(chain, token, created_at) VALUES(?,?,?)",
+                            (chain, token, now),
+                        )
+                        await self.conn.commit()
+                        return None, "max_concurrent"
+
                 cur = await self.conn.execute(
                     """
                     INSERT INTO paper_positions(
@@ -350,7 +415,7 @@ class Database:
                     (pos_id, "buy", entry_price, qty, notional_usd, now),
                 )
                 await self.conn.commit()
-                return int(pos_id) if pos_id is not None else None
+                return (int(pos_id) if pos_id is not None else None), None
             except Exception:
                 await self.conn.rollback()
                 raise
@@ -367,6 +432,29 @@ class Database:
             cur = await self.conn.execute("SELECT * FROM paper_positions WHERE status='open'")
         return list(await cur.fetchall())
 
+    async def count_open_papers(self, chain: str) -> int:
+        cur = await self.conn.execute(
+            "SELECT COUNT(*) AS c FROM paper_positions WHERE status='open' AND chain=?",
+            (chain,),
+        )
+        row = await cur.fetchone()
+        return int(row["c"] if row else 0)
+
+    async def insert_signal_log(
+        self, chain: str, token: str, source: str, reason: str | None, payload_json: str | None
+    ) -> None:
+        async def _tx() -> None:
+            await self.conn.execute(
+                """
+                INSERT INTO signal_log(chain, token, source, reason, payload_json, created_at)
+                VALUES(?,?,?,?,?,?)
+                """,
+                (chain, token, source, reason, payload_json, time.time()),
+            )
+            await self.conn.commit()
+
+        await self._with_write(_tx)
+
     async def list_snapshot_targets(self, chain: str, snapshot_count: int) -> list[aiosqlite.Row]:
         """Open positions, plus any closed positions still missing snapshot rows.
 
@@ -375,17 +463,12 @@ class Database:
         """
         cur = await self.conn.execute(
             """
-            SELECT p.* FROM paper_positions p
+            SELECT p.*, COUNT(s.id) AS snap_count
+            FROM paper_positions p
+            LEFT JOIN snapshots s ON s.position_id = p.id
             WHERE p.chain=?
-              AND (
-                p.status='open'
-                OR (
-                  p.status='closed'
-                  AND (
-                    SELECT COUNT(*) FROM snapshots s WHERE s.position_id=p.id
-                  ) < ?
-                )
-              )
+            GROUP BY p.id
+            HAVING p.status='open' OR snap_count < ?
             ORDER BY p.id
             """,
             (chain, max(0, snapshot_count)),
@@ -574,22 +657,37 @@ class Database:
         )
         return await cur.fetchone()
 
-    async def list_recent_closed_papers(self, limit: int = 10) -> list[aiosqlite.Row]:
-        cur = await self.conn.execute(
-            """
-            SELECT * FROM paper_positions
-            WHERE status='closed'
-            ORDER BY closed_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
+    async def list_recent_closed_papers(
+        self, limit: int = 10, chain: str | None = None
+    ) -> list[aiosqlite.Row]:
+        if chain:
+            cur = await self.conn.execute(
+                """
+                SELECT * FROM paper_positions
+                WHERE status='closed' AND chain=?
+                ORDER BY closed_at DESC
+                LIMIT ?
+                """,
+                (chain, limit),
+            )
+        else:
+            cur = await self.conn.execute(
+                """
+                SELECT * FROM paper_positions
+                WHERE status='closed'
+                ORDER BY closed_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
         return list(await cur.fetchall())
 
-    async def paper_stats_summary(self) -> dict[str, Any]:
-        """Current-experiment stats from paper tables only (not alerts)."""
+    async def paper_stats_summary(self, chain: str | None = None) -> dict[str, Any]:
+        """Current-experiment stats from paper tables only (not alerts). Optionally filtered by chain."""
+        where = "WHERE chain=?" if chain else ""
+        params: tuple[Any, ...] = (chain,) if chain else ()
         cur = await self.conn.execute(
-            """
+            f"""
             SELECT
               COALESCE(SUM(CASE WHEN status='open' THEN 1 ELSE 0 END), 0) AS open_count,
               COALESCE(SUM(CASE WHEN status='closed' THEN 1 ELSE 0 END), 0) AS closed_count,
@@ -597,27 +695,52 @@ class Database:
               COALESCE(SUM(CASE WHEN status='open' THEN notional_usd ELSE 0 END), 0) AS open_notional,
               COALESCE(COUNT(*), 0) AS opened_count,
               COALESCE(SUM(CASE WHEN status='closed' AND close_reason='hard_stop' THEN 1 ELSE 0 END), 0)
-                AS hard_stop_count
+                AS hard_stop_count,
+              COALESCE(SUM(CASE WHEN status='closed' AND realized_pnl > 0 THEN 1 ELSE 0 END), 0)
+                AS win_count,
+              AVG(CASE WHEN status='closed' AND realized_pnl > 0 THEN realized_pnl END)
+                AS avg_win_usd,
+              AVG(CASE WHEN status='closed' AND realized_pnl <= 0 THEN realized_pnl END)
+                AS avg_loss_usd,
+              AVG(CASE WHEN status='closed' AND closed_at IS NOT NULL
+                       THEN (closed_at - opened_at) END)
+                AS avg_hold_sec
             FROM paper_positions
-            """
+            {where}
+            """,
+            params,
         )
         row = await cur.fetchone()
+        skip_where = "WHERE chain=?" if chain else ""
         skip_cur = await self.conn.execute(
-            "SELECT COALESCE(COUNT(*), 0) AS skipped_open_count FROM paper_skip_opens"
+            f"SELECT COALESCE(COUNT(*), 0) AS skipped_open_count FROM paper_skip_opens {skip_where}",
+            params,
         )
         skip_row = await skip_cur.fetchone()
+        closed = int(row["closed_count"] if row else 0)
+        win_count = int(row["win_count"] if row and row["win_count"] is not None else 0)
         return {
             "open_count": int(row["open_count"] if row else 0),
-            "closed_count": int(row["closed_count"] if row else 0),
+            "closed_count": closed,
             "closed_pnl": float(row["closed_pnl"] if row else 0),
             "open_notional": float(row["open_notional"] if row else 0),
             "opened_count": int(row["opened_count"] if row else 0),
             "skipped_open_count": int(skip_row["skipped_open_count"] if skip_row else 0),
             "hard_stop_count": int(row["hard_stop_count"] if row else 0),
+            "win_count": win_count,
+            "win_rate": (win_count / closed) if closed > 0 else None,
+            "avg_win_usd": float(row["avg_win_usd"]) if row and row["avg_win_usd"] is not None else None,
+            "avg_loss_usd": float(row["avg_loss_usd"]) if row and row["avg_loss_usd"] is not None else None,
+            "avg_hold_sec": float(row["avg_hold_sec"]) if row and row["avg_hold_sec"] is not None else None,
         }
 
-    async def reset_paper_experiment(self) -> dict[str, int]:
-        """Clear paper state + alerts/rejects/cooldowns for a fresh simulation cohort."""
+    async def reset_paper_experiment(self, chain: str = "all") -> dict[str, int]:
+        """Clear paper state + alerts/rejects/cooldowns for a fresh simulation cohort.
+
+        chain="all" clears every chain (legacy full-table behaviour). Any other value
+        scopes the delete to that chain only, using position_id subqueries for the
+        two tables (paper_fills, snapshots) that have no chain column of their own.
+        """
         tables = (
             "paper_fills",
             "snapshots",
@@ -632,9 +755,39 @@ class Database:
             out: dict[str, int] = {}
             await self.conn.execute("BEGIN IMMEDIATE")
             try:
-                for table in tables:
-                    cur = await self.conn.execute(f"DELETE FROM {table}")
-                    out[table] = int(cur.rowcount or 0)
+                if chain == "all":
+                    for table in tables:
+                        cur = await self.conn.execute(f"DELETE FROM {table}")
+                        out[table] = int(cur.rowcount or 0)
+                else:
+                    cur = await self.conn.execute(
+                        "DELETE FROM paper_fills WHERE position_id IN "
+                        "(SELECT id FROM paper_positions WHERE chain=?)",
+                        (chain,),
+                    )
+                    out["paper_fills"] = int(cur.rowcount or 0)
+                    cur = await self.conn.execute(
+                        "DELETE FROM snapshots WHERE position_id IN "
+                        "(SELECT id FROM paper_positions WHERE chain=?)",
+                        (chain,),
+                    )
+                    out["snapshots"] = int(cur.rowcount or 0)
+                    cur = await self.conn.execute(
+                        "DELETE FROM paper_positions WHERE chain=?", (chain,)
+                    )
+                    out["paper_positions"] = int(cur.rowcount or 0)
+                    cur = await self.conn.execute(
+                        "DELETE FROM paper_skip_opens WHERE chain=?", (chain,)
+                    )
+                    out["paper_skip_opens"] = int(cur.rowcount or 0)
+                    cur = await self.conn.execute("DELETE FROM cooldowns WHERE chain=?", (chain,))
+                    out["cooldowns"] = int(cur.rowcount or 0)
+                    cur = await self.conn.execute("DELETE FROM alerts WHERE chain=?", (chain,))
+                    out["alerts"] = int(cur.rowcount or 0)
+                    cur = await self.conn.execute(
+                        "DELETE FROM reject_counts WHERE chain=?", (chain,)
+                    )
+                    out["reject_counts"] = int(cur.rowcount or 0)
                 await self.conn.commit()
             except Exception:
                 await self.conn.rollback()
@@ -655,23 +808,43 @@ class Database:
         )
         return list(await cur.fetchall())
 
-    async def list_recent_alerts(self, limit: int = 10) -> list[aiosqlite.Row]:
-        cur = await self.conn.execute(
-            """
-            SELECT chain, token, source_key, created_at, payload_json
-            FROM alerts
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
+    async def list_recent_alerts(
+        self, limit: int = 10, chain: str | None = None
+    ) -> list[aiosqlite.Row]:
+        if chain:
+            cur = await self.conn.execute(
+                """
+                SELECT chain, token, source_key, created_at, payload_json
+                FROM alerts
+                WHERE chain=?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (chain, limit),
+            )
+        else:
+            cur = await self.conn.execute(
+                """
+                SELECT chain, token, source_key, created_at, payload_json
+                FROM alerts
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
         return list(await cur.fetchall())
 
-    async def count_active_cooldowns(self) -> int:
+    async def count_active_cooldowns(self, chain: str | None = None) -> int:
         now = time.time()
-        cur = await self.conn.execute(
-            "SELECT COUNT(*) AS c FROM cooldowns WHERE until_ts>?",
-            (now,),
-        )
+        if chain:
+            cur = await self.conn.execute(
+                "SELECT COUNT(*) AS c FROM cooldowns WHERE until_ts>? AND chain=?",
+                (now, chain),
+            )
+        else:
+            cur = await self.conn.execute(
+                "SELECT COUNT(*) AS c FROM cooldowns WHERE until_ts>?",
+                (now,),
+            )
         row = await cur.fetchone()
         return int(row["c"] if row else 0)
