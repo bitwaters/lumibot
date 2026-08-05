@@ -57,6 +57,9 @@ class TokenCandidate:
     open_timestamp: float | None = None
     # True when the same token was recently seen on the other source (signal↔trending).
     dual_source: bool = False
+    # Wallet-tag counts from token_info (query card enrichment; None when absent).
+    smart_wallets: float | None = None
+    kol_wallets: float | None = None
 
     @property
     def source_key(self) -> str:

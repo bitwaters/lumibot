@@ -23,6 +23,7 @@ from lumibot.telegram_notify import (
     render_stats,
     render_status,
     render_unknown_command,
+    render_query_card,
 )
 
 
@@ -653,6 +654,8 @@ def test_all_cards_html_is_well_formed():
         render_help(app, enabled_chains=["sol"], include_reset=True),
         render_help(app, enabled_chains=["sol"], include_reset=False),
         render_unknown_command(),
+        render_query_card(_cand()),
+        render_query_card(_cand(safety=None)),
     ]
     for card in cards:
         _assert_html_ok(card)

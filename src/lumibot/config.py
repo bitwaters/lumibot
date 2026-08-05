@@ -161,12 +161,40 @@ class RateLimitCfg(BaseModel):
     min_interval_sec: float = 1.0
 
 
+class CaQueryCfg(BaseModel):
+    enabled: bool = True
+    # Per-chat minimum interval between CA queries (anti-spam; protects quota).
+    min_interval_sec: float = 5.0
+    # Probe order for 0x (EVM) addresses among enabled chains.
+    probe_order: list[str] = Field(default_factory=lambda: ["bsc", "robinhood"])
+
+
+class NarrativeCfg(BaseModel):
+    enabled: bool = False
+    base_url: str = "https://api.deepseek.com"
+    model: str = "deepseek-chat"
+    # LLM request timeout (single-layer; covers the whole chat/completions call).
+    timeout_sec: float = 10.0
+    # Symbols shorter than this skip narrative inference.
+    min_symbol_len: int = 3
+    symbol_blocklist: list[str] = Field(default_factory=list)
+    # Per-token narrative cache TTL; each token triggers at most one LLM call.
+    cache_ttl_sec: int = 3600
+
+
 class GlobalCfg(BaseModel):
     live_master_switch: bool = False
     rate_limit: RateLimitCfg = Field(default_factory=RateLimitCfg)
     enrichment_cache_ttl_sec: int = 300
     security_cache_ttl_sec: int = 3600
     price_source: str = "token_info"
+    # Single-source-of-truth rules (config/chains.yaml) — no hardcoded rule knobs.
+    manage_interval_sec: float = 5.0     # paper position manage loop interval
+    dual_source_ttl_sec: float = 30.0    # dual-source sighting window
+    alerts_per_chain: int = 5            # /alerts rows per chain
+    trending_defer_budget: float = 4.0   # trending poll defers when limiter budget below this
+    ca_query: CaQueryCfg | None = None
+    narrative: NarrativeCfg | None = None
 
 
 class AppConfig(BaseModel):
@@ -193,6 +221,7 @@ class Settings(BaseSettings):
     lumibot_config: str = "config/chains.yaml"
     lumibot_db_path: str = "data/lumibot.db"
     lumibot_skip_ipv4_check: bool = False
+    narrative_api_key: str = ""
 
     @staticmethod
     def _parse_id_list(raw: str, *, env_name: str) -> list[int]:

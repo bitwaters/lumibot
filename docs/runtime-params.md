@@ -50,8 +50,10 @@ OpenSpec 归档里的 design / delta specs 可能仍写着历史数字（例如�
 
 ## 限流优先级（P6）
 
-完整多桶优先级未实现。现状：trending 在 `available() < 4` 时延后轮询，为 post-gate 报价与 manage 留预算。
+完整多桶优先级未实现。现状：trending 在 `available() < global.trending_defer_budget` 时延后轮询，为 post-gate 报价与 manage 留预算。
 
-持仓管理（manage）循环间隔**硬编码 5s**（pipeline `_loop_manage`，含 0-2s jitter），配合全局 1s 最小请求间隔与 token bucket（capacity 20 / refill 6/s），3 并发持仓下安全。
+持仓管理（manage）循环间隔由 `global.manage_interval_sec` 控制（默认 5s，含 0-2s jitter），配合全局 1s 最小请求间隔与 token bucket（capacity 20 / refill 6/s），3 并发持仓下安全。
+
+双源判定窗口 `global.dual_source_ttl_sec`（默认 30s）；`/alerts` 每链条数 `global.alerts_per_chain`（默认 5）。
 
 校准流程见 [calibration.md](./calibration.md)。

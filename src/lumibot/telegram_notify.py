@@ -249,6 +249,14 @@ def _metric_row(cells: list[tuple[str, str]]) -> str:
     return hcode("  ".join(_metric_cell(label, value) for label, value in cells).rstrip())
 
 
+def append_narrative_line(card: str, narrative_line: str | None) -> str:
+    if not narrative_line:
+        return card
+    lines = [line for line in card.splitlines() if not line.startswith("📚")]
+    lines.append(f"📚 {_esc(narrative_line)}")
+    return "\n".join(lines)
+
+
 def render_paper_event(ev: PaperTradeEvent) -> str:
     tag = _chain_tag(ev.chain)
     sym = ev.symbol or ev.token[:8]
@@ -682,6 +690,42 @@ def render_unknown_command() -> str:
     return "📖 未知指令\n\n发送 /help 查看可用命令。"
 
 
+def render_query_card(cand: TokenCandidate) -> str:
+    """CA query card: 🔍 identity, price row, advisory safety, no paper status."""
+    sym = cand.symbol or "未知"
+    lines = [
+        f"🔍 {hbold('$' + _esc(sym))} · {_esc(cand.chain_tag)}",
+        "",
+        f"📍 CA: {hcode(_esc(cand.address))}",
+        "",
+        hbold("📊 指标"),
+    ]
+    metrics: list[tuple[str, str]] = [
+        ("💰 价格", _price(cand.price)),
+        ("💰 市值", _usd_compact(cand.market_cap)),
+        ("⏱ 开盘", format_relative_age(cand.open_timestamp)),
+        ("💧 流动性", _usd_compact(cand.liquidity)),
+        ("👥 持有人", _num(cand.holder_count)),
+        ("👑 Top10", _pct(cand.top10_rate)),
+        ("🔥 热度", _num(cand.visiting_count)),
+        ("🚀 1H 成交", _usd_compact(cand.volume_1h)),
+    ]
+    if cand.smart_wallets is not None or cand.kol_wallets is not None:
+        metrics.append(("🦈 聪明钱", _num(cand.smart_wallets)))
+        metrics.append(("🎩 KOL", _num(cand.kol_wallets)))
+    if cand.platform:
+        metrics.append(("🏭 平台", cand.platform))
+    rows: list[list[tuple[str, str]]] = [metrics[:1], metrics[1:2]]
+    rest = metrics[2:]
+    for i in range(0, len(rest), 2):
+        rows.append(rest[i : i + 2])
+    for row in rows:
+        lines.append(_metric_row(row))
+    safety_line = _safety_line(cand) if cand.safety is not None else "🛡 安全 未知"
+    lines.extend(["", safety_line])
+    return "\n".join(lines)
+
+
 def _safety_line(cand: TokenCandidate) -> str:
     safety = cand.safety
     parts: list[str] = ["🛡 安全 通过"]
@@ -885,6 +929,31 @@ class TelegramNotifier:
     ) -> tuple[bool, bool]:
         return await self.edit_text(
             render_card(cand, paper=paper, latency_sec=latency_sec, paper_status=paper_status),
+            message_ids,
+            reply_markup=gmgn_keyboard(cand.chain, cand.address),
+            disable_preview=True,
+        )
+
+    async def edit_candidate_with_narrative(
+        self,
+        cand: TokenCandidate,
+        paper: ExecResult | None = None,
+        *,
+        latency_sec: float | None = None,
+        paper_status: str | None = None,
+        message_ids: list[tuple[int, int]],
+        narrative_line: str,
+    ) -> tuple[bool, bool]:
+        return await self.edit_text(
+            append_narrative_line(
+                render_card(
+                    cand,
+                    paper=paper,
+                    latency_sec=latency_sec,
+                    paper_status=paper_status,
+                ),
+                narrative_line,
+            ),
             message_ids,
             reply_markup=gmgn_keyboard(cand.chain, cand.address),
             disable_preview=True,

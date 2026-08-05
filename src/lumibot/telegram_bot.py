@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import re
+import time
+from collections.abc import Awaitable, Callable
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart
@@ -10,16 +13,22 @@ from aiogram.types import (
     BotCommandScopeAllPrivateChats,
     BotCommandScopeChat,
     BotCommandScopeDefault,
+    InlineKeyboardMarkup,
     Message,
 )
 
-from lumibot.config import AppConfig
+from lumibot.config import AppConfig, enabled_chains
 from lumibot.db import Database
+from lumibot.filters import merge_info_fields
 from lumibot.gmgn.client import GmgnClient
+from lumibot.models import Source, TokenCandidate
+from lumibot.safety import evaluate_safety, normalize_security
 from lumibot.telegram_notify import (
+    gmgn_keyboard,
     render_alerts,
     render_help,
     render_positions,
+    render_query_card,
     render_rejects,
     render_reset_paper,
     render_reset_paper_hint,
@@ -30,6 +39,127 @@ from lumibot.telegram_notify import (
 )
 
 logger = logging.getLogger(__name__)
+
+EVM_CA_RE = re.compile(r"\b0x[0-9a-fA-F]{40}\b")
+SOLANA_CA_RE = re.compile(r"\b[1-9A-HJ-NP-Za-km-z]{40,44}\b")
+
+
+def _extract_ca(text: str) -> str | None:
+    """First contract address in text: EVM 0x+40hex, else Solana base58 40-44."""
+    m = EVM_CA_RE.search(text)
+    if m:
+        return m.group(0)
+    m = SOLANA_CA_RE.search(text)
+    if m:
+        return m.group(0)
+    return None
+
+
+def _chain_candidates(addr: str, app_cfg: AppConfig) -> list[str]:
+    """Chain candidates for an address: sol by format, EVM chains per probe order."""
+    enabled = enabled_chains(app_cfg)
+    if EVM_CA_RE.fullmatch(addr):
+        order = app_cfg.global_.ca_query.probe_order if app_cfg.global_.ca_query else ["bsc", "robinhood"]
+        return [c for c in order if c in enabled]
+    return ["sol"] if "sol" in enabled else []
+
+
+def _info_has_data(info: dict, addr: str) -> bool:
+    """GMGN serves a 200 empty shell (symbol='', address='') for wrong chains.
+
+    A real token resolves with a non-empty symbol and the requested address.
+    """
+    if info.get("address") and info.get("address") != addr:
+        return False
+    sym = info.get("symbol") or info.get("token_symbol")
+    if sym:
+        return True
+    if info.get("market_cap") or info.get("mc"):
+        return True
+    return False
+
+
+def _as_float(v: object) -> float | None:
+    try:
+        if v is None:
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _query_token(
+    client: GmgnClient,
+    addr: str,
+    app_cfg: AppConfig,
+) -> tuple[str | None, TokenCandidate | None]:
+    """Probe candidate chains and assemble a candidate with info + advisory safety."""
+    for chain in _chain_candidates(addr, app_cfg):
+        try:
+            info = await client.get_token_info(chain, addr)
+        except Exception as exc:  # noqa: BLE001
+            if "404" in str(exc):
+                continue  # wrong chain — try next
+            raise  # GMGN down (429/IP ban/network) — let the handler degrade
+        if not isinstance(info, dict) or not info or not _info_has_data(info, addr):
+            continue
+        cand = TokenCandidate(chain=chain, address=addr, source=Source.TRENDING)
+        merge_info_fields(cand, info, force_visiting=True)
+        wts = info.get("wallet_tags_stat")
+        if isinstance(wts, dict):
+            cand.smart_wallets = _as_float(wts.get("smart_wallets"))
+            cand.kol_wallets = _as_float(wts.get("renowned_wallets"))
+        chain_cfg = app_cfg.chains.get(chain)
+        try:
+            sec = await client.get_token_security(chain, addr)
+            if chain_cfg is not None:
+                cand.safety = evaluate_safety(
+                    chain_cfg.safety_profile,
+                    normalize_security(sec if isinstance(sec, dict) else {}),
+                    chain_cfg.safety,
+                )
+        except Exception:  # noqa: BLE001 — advisory only, fail open
+            logger.warning("ca query security failed chain=%s addr=%s", chain, addr)
+        return chain, cand
+    return None, None
+
+
+async def _handle_ca_message(
+    *,
+    chat_id: int,
+    text: str,
+    client: GmgnClient,
+    app_cfg: AppConfig,
+    throttle: dict[int, float],
+    reply: Callable[..., Awaitable[object]],
+) -> bool:
+    """CA-query flow; returns True when the message was consumed."""
+    q = app_cfg.global_.ca_query
+    if q is None or not q.enabled:
+        return False
+    addr = _extract_ca(text)
+    if not addr:
+        return False
+    now = time.time()
+    if now - throttle.get(chat_id, 0.0) < q.min_interval_sec:
+        await reply("⏳ 查询太频繁，请稍后再试。", parse_mode="HTML")
+        return True
+    throttle[chat_id] = now
+    try:
+        chain, cand = await _query_token(client, addr, app_cfg)
+    except Exception:  # noqa: BLE001 — GMGN down/429/IP ban
+        logger.exception("ca query failed chat_id=%s addr=%s", chat_id, addr)
+        await reply("⚠️ GMGN 暂时不可用，请稍后再试。", parse_mode="HTML")
+        return True
+    if chain is None or cand is None:
+        await reply("🔍 未找到该合约（支持 sol / bsc / robinhood）。", parse_mode="HTML")
+        return True
+    await reply(
+        render_query_card(cand),
+        parse_mode="HTML",
+        reply_markup=gmgn_keyboard(chain, addr),
+    )
+    return True
 
 BOT_COMMANDS_COMMON: list[BotCommand] = [
     BotCommand(command="positions", description="当前模拟持仓"),
@@ -51,8 +181,6 @@ BOT_COMMANDS_PRIVATE_ONLY: list[BotCommand] = [
 BOT_COMMANDS: list[BotCommand] = [*BOT_COMMANDS_COMMON, *BOT_COMMANDS_PRIVATE_ONLY]
 # Group menu: same as common — no reset_paper shortcut.
 BOT_COMMANDS_GROUP: list[BotCommand] = list(BOT_COMMANDS_COMMON)
-
-ALERTS_PER_CHAIN = 5
 
 
 async def register_bot_commands(
@@ -226,7 +354,9 @@ def build_dispatcher(
         chains = await _report_chains()
         per_chain: dict[str, list] = {}
         for name in chains:
-            per_chain[name] = await db.list_recent_alerts(ALERTS_PER_CHAIN, chain=name)
+            per_chain[name] = await db.list_recent_alerts(
+                app_cfg.global_.alerts_per_chain, chain=name
+            )
         await message.answer(render_alerts(per_chain=per_chain), parse_mode="HTML")
 
     @router.message(Command("status"))
@@ -304,9 +434,21 @@ def build_dispatcher(
         )
         await message.answer(render_reset_paper(deleted, chain=chain), parse_mode="HTML")
 
+    _query_throttle: dict[int, float] = {}
+
     @router.message(F.text)
     async def fallback(message: Message) -> None:
         if not _authorized(message):
+            return
+        handled = await _handle_ca_message(
+            chat_id=_chat_id(message) or 0,
+            text=message.text or "",
+            client=client,
+            app_cfg=app_cfg,
+            throttle=_query_throttle,
+            reply=message.reply,
+        )
+        if handled:
             return
         await message.answer(render_unknown_command(), parse_mode="HTML")
 

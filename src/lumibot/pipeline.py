@@ -23,6 +23,7 @@ from lumibot.filters import (
 )
 from lumibot.gmgn.client import GmgnClient
 from lumibot.models import Source, TokenCandidate
+from lumibot.narrative import NarrativeService
 from lumibot.safety import evaluate_safety, normalize_security
 from lumibot.telegram_notify import TelegramNotifier
 
@@ -38,6 +39,7 @@ class ChainPipeline:
         client: GmgnClient,
         db: Database,
         notifier: TelegramNotifier,
+        narrative: NarrativeService | None = None,
     ) -> None:
         self.chain = chain
         self.cfg = chain_cfg
@@ -45,11 +47,12 @@ class ChainPipeline:
         self.client = client
         self.db = db
         self.notifier = notifier
+        self.narrative = narrative
         self._tasks: list[asyncio.Task] = []
         self._stop = asyncio.Event()
         # Recent source sightings for dual-source (signal↔trending) within TTL.
         self._recent_sources: dict[str, dict[str, float]] = {}
-        self._dual_source_ttl_sec = 30.0
+        self._dual_source_ttl_sec = app_cfg.global_.dual_source_ttl_sec
         self.executor: Executor
         if chain_cfg.execution.mode == "live":
             self.executor = LiveExecutor(db, app_cfg, chain, chain_cfg)
@@ -114,7 +117,7 @@ class ChainPipeline:
         window = cfg.window
         while not self._stop.is_set():
             try:
-                if await self.client.limiter.available() < 4:
+                if await self.client.limiter.available() < self.app_cfg.global_.trending_defer_budget:
                     logger.info("trending deferred chain=%s reason=rate_budget", self.chain)
                     await self._sleep(min(interval, 5))
                     continue
@@ -142,7 +145,7 @@ class ChainPipeline:
             except Exception:  # noqa: BLE001
                 logger.exception("paper manage failed chain=%s", self.chain)
             # Add jitter to spread requests across chains
-            await self._sleep(5 + random.uniform(0, 2))
+            await self._sleep(self.app_cfg.global_.manage_interval_sec + random.uniform(0, 2))
 
     async def _sleep(self, sec: float) -> None:
         try:
@@ -232,7 +235,7 @@ class ChainPipeline:
             seen_at=seen_at,
             open_timestamp=parse_open_timestamp(raw),
         )
-        await self._enrich_and_process(cand, need_visiting_from_info=False)
+        await self._enrich_and_process(cand, need_visiting_from_info=True)
 
     async def _fresh_quote(self, cand: TokenCandidate) -> tuple[float | None, float | None, dict]:
         price_source = self.app_cfg.global_.price_source
@@ -517,6 +520,9 @@ class ChainPipeline:
                     cand.source_key,
                 )
 
+        if exec_result.status == "opened" and sent_message_ids:
+            self._spawn_narrative(cand, info, exec_result, sent_message_ids)
+
         await self.db.insert_alert(
             cand.chain, cand.address, cand.source_key, json.dumps(text_payload)
         )
@@ -533,7 +539,6 @@ class ChainPipeline:
     @staticmethod
     def _payload_features(cand: TokenCandidate) -> dict[str, Any]:
         """Filter/quote features at push time, for offline calibration later."""
-        out: dict[str, Any] = {
             "market_cap": cand.market_cap,
             "liquidity": cand.liquidity,
             "top10_rate": cand.top10_rate,

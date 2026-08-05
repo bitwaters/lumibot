@@ -1,0 +1,297 @@
+import pytest
+
+from lumibot.config import load_app_config
+from lumibot.models import NormalizedSafety, Source, TokenCandidate
+from lumibot.telegram_bot import (
+    _chain_candidates,
+    _extract_ca,
+    _handle_ca_message,
+    _query_token,
+)
+from lumibot.telegram_notify import render_query_card
+
+EVM = "0xcd827de09ad3f2a8d9e47f36b8cb2635aa700932"
+SOL = "61t6VGc1pEoGJLtr5gYveG4LarhTGrhJhtYdMNiMpump"
+
+
+def _app():
+    return load_app_config("config/chains.yaml")
+
+
+class FakeClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+        self.infos: dict[tuple[str, str], dict | Exception] = {}
+        self.secs: dict[tuple[str, str], dict | Exception] = {}
+
+    async def get_token_info(self, chain, address, *, use_cache=True):
+        self.calls.append((chain, address))
+        v = self.infos.get((chain, address), {})
+        if isinstance(v, Exception):
+            raise v
+        return v
+
+    async def get_token_security(self, chain, address):
+        v = self.secs.get((chain, address), {})
+        if isinstance(v, Exception):
+            raise v
+        return v
+
+
+def _info(**kw) -> dict:
+    base = {"symbol": "MUSK", "market_cap": 27_700, "liquidity": 15_600}
+    base.update(kw)
+    return base
+
+
+def test_extract_ca_evm_embedded():
+    assert _extract_ca(f"看看这个 {EVM} 怎么样") == EVM
+    assert _extract_ca(f"https://gmgn.ai/token/{EVM}?x=1") == EVM
+
+
+def test_extract_ca_solana():
+    assert _extract_ca(f"买入 {SOL} ！") == SOL
+
+
+def test_extract_ca_evm_not_matched_as_solana():
+    assert _extract_ca(EVM) == EVM
+
+
+def test_extract_ca_first_of_many():
+    other_evm = "0x" + "a" * 40
+    assert _extract_ca(f"{other_evm} 和 {EVM}") == other_evm
+
+
+def test_extract_ca_none():
+    assert _extract_ca("随便聊聊，没有地址") is None
+    assert _extract_ca("0x123") is None
+    assert _extract_ca("shortbase58") is None
+
+
+def test_chain_candidates_sol_by_format():
+    assert _chain_candidates(SOL, _app()) == ["sol"]
+
+
+def test_chain_candidates_evm_by_probe_order():
+    assert _chain_candidates(EVM, _app()) == ["bsc", "robinhood"]
+
+
+@pytest.mark.asyncio
+async def test_query_token_sol_direct():
+    client = FakeClient()
+    client.infos[("sol", SOL)] = _info(
+        wallet_tags_stat={"smart_wallets": 16, "renowned_wallets": 4}
+    )
+    chain, cand = await _query_token(client, SOL, _app())
+    assert chain == "sol"
+    assert cand is not None and cand.symbol == "MUSK"
+    assert cand.smart_wallets == 16
+    assert cand.kol_wallets == 4
+    assert client.calls == [("sol", SOL)]
+
+
+@pytest.mark.asyncio
+async def test_query_token_empty_shell_moves_on():
+    client = FakeClient()
+    client.infos[("bsc", EVM)] = {"symbol": "", "address": "", "price": {"price": "0"}}
+    client.infos[("robinhood", EVM)] = _info()
+    chain, _ = await _query_token(client, EVM, _app())
+    assert chain == "robinhood"
+
+
+@pytest.mark.asyncio
+async def test_query_token_bsc_hit_no_rh_probe():
+    client = FakeClient()
+    client.infos[("bsc", EVM)] = _info()
+    chain, cand = await _query_token(client, EVM, _app())
+    assert chain == "bsc"
+    assert client.calls == [("bsc", EVM)]
+
+
+@pytest.mark.asyncio
+async def test_query_token_bsc_404_falls_over_to_rh():
+    client = FakeClient()
+    client.infos[("bsc", EVM)] = RuntimeError("HTTP 404")
+    client.infos[("robinhood", EVM)] = _info()
+    chain, cand = await _query_token(client, EVM, _app())
+    assert chain == "robinhood"
+    assert client.calls == [("bsc", EVM), ("robinhood", EVM)]
+
+
+@pytest.mark.asyncio
+async def test_query_token_all_miss():
+    client = FakeClient()
+    client.infos[("bsc", EVM)] = RuntimeError("HTTP 404")
+    client.infos[("robinhood", EVM)] = {}
+    chain, cand = await _query_token(client, EVM, _app())
+    assert chain is None and cand is None
+
+
+@pytest.mark.asyncio
+async def test_query_token_empty_info_moves_on():
+    client = FakeClient()
+    client.infos[("bsc", EVM)] = {}
+    client.infos[("robinhood", EVM)] = _info()
+    chain, _ = await _query_token(client, EVM, _app())
+    assert chain == "robinhood"
+
+
+def test_query_card_layout():
+    cand = TokenCandidate(
+        chain="bsc",
+        address=EVM,
+        source=Source.TRENDING,
+        symbol="MUSK",
+        price=0.000123,
+        market_cap=27_700,
+        liquidity=15_600,
+        top10_rate=0.163,
+        holder_count=295,
+        visiting_count=4,
+        volume_1h=None,
+        platform="flap",
+        open_timestamp=1_700_000_000,
+        smart_wallets=16,
+        kol_wallets=4,
+        safety=NormalizedSafety(sell_tax=0.01),
+    )
+    text = render_query_card(cand)
+    assert text.startswith("🔍 <b>$MUSK</b> · BSC")
+    assert f"📍 CA: <code>{EVM}</code>" in text
+    assert "<code>💰 价格    0.000123</code>" in text
+    assert "<code>💰 市值    $27.7K</code>" in text
+    assert "🔥 热度" in text
+    assert "🦈 聪明钱" in text and "🎩 KOL" in text
+    assert "卖税 1.0%" in text
+    assert "已开仓" not in text
+    assert "⏱ 延迟" not in text
+
+
+def test_query_card_hides_sm_kol_when_absent():
+    cand = TokenCandidate(
+        chain="sol", address=SOL, source=Source.TRENDING, symbol="X", market_cap=10_000
+    )
+    text = render_query_card(cand)
+    assert "🦈 聪明钱" not in text
+    assert "🎩 KOL" not in text
+
+
+def test_query_card_missing_metrics_dash():
+    cand = TokenCandidate(chain="sol", address=SOL, source=Source.TRENDING, symbol="X")
+    text = render_query_card(cand)
+    assert "<code>💰 价格    —</code>" in text
+    assert "<code>💰 市值    —</code>" in text
+    assert "🛡 安全 未知" in text
+
+
+def test_query_card_hard_fail_still_renders():
+    cand = TokenCandidate(
+        chain="sol",
+        address=SOL,
+        source=Source.TRENDING,
+        symbol="X",
+        safety=NormalizedSafety(hard_fail=True, reason="safety_honeypot", warnings=["honeypot"]),
+    )
+    text = render_query_card(cand)
+    assert "🔍 <b>$X</b> · SOL" in text
+    assert "安全" in text
+
+
+@pytest.mark.asyncio
+async def test_handle_ca_message_success():
+    client = FakeClient()
+    client.infos[("bsc", EVM)] = _info()
+    replies: list[tuple] = []
+
+    async def reply(*args, **kwargs):
+        replies.append((args, kwargs))
+
+    handled = await _handle_ca_message(
+        chat_id=1, text=f"查 {EVM}", client=client, app_cfg=_app(), throttle={}, reply=reply
+    )
+    assert handled is True
+    assert len(replies) == 1
+    text = replies[0][0][0]
+    kwargs = replies[0][1]
+    assert text.startswith("🔍 <b>$MUSK</b>")
+    assert kwargs["parse_mode"] == "HTML"
+    assert kwargs["reply_markup"] is not None
+
+
+@pytest.mark.asyncio
+async def test_handle_ca_message_throttled():
+    client = FakeClient()
+    replies: list[tuple] = []
+
+    async def reply(*args, **kwargs):
+        replies.append((args, kwargs))
+
+    throttle: dict[int, float] = {1: 1_000_000_000_000}
+    handled = await _handle_ca_message(
+        chat_id=1, text=EVM, client=client, app_cfg=_app(), throttle=throttle, reply=reply
+    )
+    assert handled is True
+    assert "查询太频繁" in replies[0][0][0]
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_handle_ca_message_gmgn_down():
+    client = FakeClient()
+    client.infos[("bsc", EVM)] = RuntimeError("GMGN IP banned")
+    replies: list[tuple] = []
+
+    async def reply(*args, **kwargs):
+        replies.append((args, kwargs))
+
+    handled = await _handle_ca_message(
+        chat_id=1, text=EVM, client=client, app_cfg=_app(), throttle={}, reply=reply
+    )
+    assert handled is True
+    assert "GMGN 暂时不可用" in replies[0][0][0]
+
+
+@pytest.mark.asyncio
+async def test_handle_ca_message_not_found():
+    client = FakeClient()
+    replies: list[tuple] = []
+
+    async def reply(*args, **kwargs):
+        replies.append((args, kwargs))
+
+    handled = await _handle_ca_message(
+        chat_id=1, text=EVM, client=client, app_cfg=_app(), throttle={}, reply=reply
+    )
+    assert handled is True
+    assert "未找到该合约" in replies[0][0][0]
+
+
+@pytest.mark.asyncio
+async def test_handle_ca_message_no_ca_passthrough():
+    client = FakeClient()
+    replies: list[tuple] = []
+
+    async def reply(*args, **kwargs):
+        replies.append((args, kwargs))
+
+    handled = await _handle_ca_message(
+        chat_id=1, text="普通消息", client=client, app_cfg=_app(), throttle={}, reply=reply
+    )
+    assert handled is False
+    assert replies == []
+
+
+@pytest.mark.asyncio
+async def test_handle_ca_message_disabled():
+    client = FakeClient()
+    replies: list[tuple] = []
+
+    async def reply(*args, **kwargs):
+        replies.append((args, kwargs))
+
+    app = _app()
+    app.global_.ca_query.enabled = False
+    handled = await _handle_ca_message(
+        chat_id=1, text=EVM, client=client, app_cfg=app, throttle={}, reply=reply
+    )
+    assert handled is False

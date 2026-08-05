@@ -76,3 +76,23 @@ chains:
     )
     with pytest.raises(ValueError, match="safety_profile"):
         load_app_config(bad)
+
+
+def test_global_rule_knobs_defaults_and_yaml_override():
+    from lumibot.config import GlobalCfg
+
+    g = GlobalCfg()
+    assert g.manage_interval_sec == 5.0
+    assert g.dual_source_ttl_sec == 30.0
+    assert g.alerts_per_chain == 5
+    assert g.trending_defer_budget == 4.0
+
+    app = load_app_config("config/chains.yaml")
+    assert app.global_.manage_interval_sec == 5.0
+    assert app.global_.dual_source_ttl_sec == 30.0
+    assert app.global_.alerts_per_chain == 5
+    assert app.global_.trending_defer_budget == 4.0
+
+    overridden = GlobalCfg(manage_interval_sec=7.0, trending_defer_budget=2.0)
+    assert overridden.manage_interval_sec == 7.0
+    assert overridden.trending_defer_budget == 2.0

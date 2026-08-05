@@ -98,6 +98,8 @@ def apply_light_filters(
         return FilterResult(False, "holders")
     visiting_min = cfg.visiting_min
     if cand.source == Source.TRENDING and cfg.visiting_min_trending is not None:
+        # Both sources now gate on token-info visiting; this stays as a per-source
+        # threshold knob, not a payload-lag allowance.
         visiting_min = cfg.visiting_min_trending
     if cand.visiting_count is None:
         return FilterResult(False, "visiting_missing")
@@ -208,7 +210,8 @@ def merge_info_fields(cand: TokenCandidate, info: dict, *, force_visiting: bool 
     if cand.volume_1h is None:
         cand.volume_1h = fields["volume_1h"]
     if force_visiting:
-        # Signal visiting MUST come from token info; never keep payload fallback.
+        # Visiting MUST come from token info for both signal and trending gates;
+        # never keep payload fallback (payload vs token_info visiting differ wildly).
         cand.visiting_count = fields["visiting_count"]
     # Trending visiting MUST stay on payload only during gate — never fill/overwrite from token info.
     if not cand.symbol:
