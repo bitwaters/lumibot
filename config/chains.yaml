@@ -16,7 +16,7 @@ global:
     min_interval_sec: 5.0         # per-chat CA query throttle
     probe_order: [bsc, robinhood] # 0x address probe order among enabled chains
   narrative:
-    enabled: false
+    enabled: true
     base_url: https://api.deepseek.com
     model: deepseek-chat
     timeout_sec: 10
