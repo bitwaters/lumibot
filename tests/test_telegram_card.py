@@ -101,7 +101,7 @@ def test_signal_push_card_layout():
     assert "<code>👥 持有人  320       👑 Top10   22.0%</code>" in text
     assert "<code>🔥 热度    210       🚀 1H 成交 $8.1K</code>" in text
     assert "<code>🏭 平台    pump.fun</code>" in text
-    assert "税 买 5.0% / 卖 5.0%" in text
+    assert "税 5.0%" in text
     assert "⚠ 开发者持仓" in text
     assert "<b>✅ 已开仓 $20.00</b> · ⏱ 延迟 1.8s" in text
     assert "类型12" not in text

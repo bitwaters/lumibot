@@ -760,7 +760,10 @@ def _safety_line(cand: TokenCandidate) -> str:
     if safety is not None:
         buy_tax = safety.buy_tax if safety.buy_tax is not None else 0.0
         sell_tax = safety.sell_tax if safety.sell_tax is not None else 0.0
-        parts.append(f"税 买 {_pct(buy_tax)} / 卖 {_pct(sell_tax)}")
+        if buy_tax == sell_tax:
+            parts.append(f"税 {_pct(buy_tax)}")
+        else:
+            parts.append(f"税 {_pct(buy_tax)}/{_pct(sell_tax)}")
         for w in safety.warnings:
             parts.append(f"⚠ {WARN_LABELS.get(w, w)}")
         if safety.wash_trading is True:
