@@ -46,6 +46,11 @@ logger = logging.getLogger(__name__)
 EVM_CA_RE = re.compile(r"\b0x[0-9a-fA-F]{40}\b")
 SOLANA_CA_RE = re.compile(r"\b[1-9A-HJ-NP-Za-km-z]{40,44}\b")
 
+# Probe misses (wrong-chain empty shells) remembered for 1h: repeat 0x queries
+# skip the miss request and reply from cache in milliseconds.
+_PROBE_MISS_TTL = 3600.0
+_probe_miss_cache: dict[tuple[str, str], float] = {}
+
 
 def _extract_ca(text: str) -> str | None:
     """First contract address in text: EVM 0x+40hex, else Solana base58 40-44."""
@@ -110,15 +115,24 @@ async def _query_token(
     addr: str,
     app_cfg: AppConfig,
 ) -> tuple[str | None, TokenCandidate | None, dict | None]:
-    """Probe candidate chains and assemble a candidate with info + advisory safety."""
+    """Probe candidate chains and assemble a candidate with info + advisory safety.
+
+    Probe misses (wrong-chain empty shells) are remembered for an hour so repeat
+    queries skip the miss request entirely (millisecond replies for hot tokens).
+    """
+    now = time.time()
     for chain in _chain_candidates(addr, app_cfg):
+        if now - _probe_miss_cache.get((chain, addr), 0.0) < _PROBE_MISS_TTL:
+            continue
         try:
             info = await client.get_token_info(chain, addr)
         except Exception as exc:  # noqa: BLE001
             if "404" in str(exc):
+                _probe_miss_cache[(chain, addr)] = now
                 continue  # wrong chain — try next
             raise  # GMGN down (429/IP ban/network) — let the handler degrade
         if not isinstance(info, dict) or not info or not _info_has_data(info, addr):
+            _probe_miss_cache[(chain, addr)] = now
             continue
         cand = TokenCandidate(chain=chain, address=addr, source=Source.TRENDING)
         merge_info_fields(cand, info, force_visiting=True)

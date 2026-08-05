@@ -2,6 +2,15 @@ import asyncio
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _clear_probe_miss_cache():
+    from lumibot.telegram_bot import _probe_miss_cache
+
+    _probe_miss_cache.clear()
+    yield
+    _probe_miss_cache.clear()
+
 from lumibot.config import load_app_config
 from lumibot.models import NormalizedSafety, Source, TokenCandidate
 from lumibot.telegram_bot import (
@@ -444,3 +453,22 @@ async def test_query_served_from_cache_first():
     # Cache-first: queries use the shared token-info/security caches (millisecond
     # replies for hot tokens); fresh fetch only happens on cache miss.
     assert client.cache_flags == [True, True], client.cache_flags
+
+
+@pytest.mark.asyncio
+async def test_probe_miss_cache_skips_known_misses():
+    from lumibot.telegram_bot import _probe_miss_cache
+
+    client = FakeClient()
+    client.infos[("bsc", EVM)] = {}  # empty shell
+    client.infos[("robinhood", EVM)] = _info()
+    chain, _, _ = await _query_token(client, EVM, _app())
+    assert chain == "robinhood"
+    assert client.calls == [("bsc", EVM), ("robinhood", EVM)]
+    # second query: bsc miss remembered -> skip straight to robinhood cache
+    client2 = FakeClient()
+    client2.infos[("robinhood", EVM)] = _info()
+    chain2, _, _ = await _query_token(client2, EVM, _app())
+    assert chain2 == "robinhood"
+    assert client2.calls == [("robinhood", EVM)]
+    _probe_miss_cache.clear()
