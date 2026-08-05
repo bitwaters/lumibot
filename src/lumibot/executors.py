@@ -73,6 +73,8 @@ class PaperExecutor(Executor):
             timeout_extend_if_profitable=self.strategy.timeout_extend_if_profitable,
             timeout_extend_hours=self.strategy.timeout_extend_hours,
             trail_dynamic=self.strategy.trail_dynamic,
+            early_stop_pct=self.strategy.early_stop_pct,
+            early_stop_sec=self.strategy.early_stop_sec,
         )
         pos_id, skip_reason = await self.db.try_open_paper(
             cand.chain,
@@ -187,6 +189,8 @@ class PaperExecutor(Executor):
             timeout_extend_if_profitable=self.strategy.timeout_extend_if_profitable,
             timeout_extend_hours=self.strategy.timeout_extend_hours,
             trail_dynamic=self.strategy.trail_dynamic,
+            early_stop_pct=self.strategy.early_stop_pct,
+            early_stop_sec=self.strategy.early_stop_sec,
         )
         action, reason, sell_qty = order.evaluate(mark, now)
         if order.peak_price != row["peak_price"]:

@@ -93,7 +93,7 @@ def test_chase_signal_only_and_disabled_by_default():
         visiting_min=100,
         chase_max_pct=0.10,
     )
-    # Trending payload prices can lag; chase never applies (no push_price set).
+    # Trending chase gate defaults to disabled (chase_max_pct_trending=0).
     trend = _base(source=Source.TRENDING, signal_type=None, price=1.0)
     assert evaluate_chase(trend, 2.0, cfg) is False
 
@@ -104,3 +104,23 @@ def test_chase_signal_only_and_disabled_by_default():
     # Missing push price / missing quote can't trigger either.
     assert evaluate_chase(_base(push_price=None), 2.0, cfg) is False
     assert evaluate_chase(_base(push_price=1.0), None, cfg) is False
+
+
+def test_chase_trending_uses_wider_threshold():
+    cfg = FiltersCfg(
+        mc_min=1_000,
+        mc_max=50_000,
+        liquidity_min=5_000,
+        top10_max=0.30,
+        holders_min=100,
+        visiting_min=100,
+        chase_max_pct=0.10,
+        chase_max_pct_trending=0.20,
+    )
+    # Trending references the payload price (no push_price) with its own threshold.
+    trend = _base(source=Source.TRENDING, signal_type=None, price=1.0)
+    assert evaluate_chase(trend, 1.15, cfg) is False   # +15% < 20%: ok
+    assert evaluate_chase(trend, 1.25, cfg) is True    # +25%: chasing the top
+    # Signal still uses the tight 10% gate.
+    sig = _base(push_price=1.0)
+    assert evaluate_chase(sig, 1.15, cfg) is True

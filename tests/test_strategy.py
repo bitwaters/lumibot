@@ -22,6 +22,34 @@ def test_hard_stop_vs_open_mark():
     assert action == Action.CLOSE and reason == "hard_stop" and qty == o.qty
 
 
+def test_early_stop_tighter_in_protection_window():
+    o = StrategyOrder.open_from_mark(
+        chain="sol", token="T", mark=1.0, notional_usd=20,
+        buy_slip=0.0, sell_slip=0.0, opened_at=time.time(),
+        hard_stop_pct=-0.20, early_stop_pct=-0.10, early_stop_sec=120,
+    )
+    # Inside the window: −15% triggers early_stop (hard_stop would need −20%).
+    action, reason, _ = o.evaluate(0.85, time.time())
+    assert action == Action.CLOSE and reason == "early_stop"
+    # Inside the window but above −10%: hold.
+    action, reason, _ = o.evaluate(0.92, time.time())
+    assert action == Action.HOLD
+
+
+def test_early_stop_expires_back_to_hard_stop():
+    opened = time.time() - 300  # past the 120s window
+    o = StrategyOrder.open_from_mark(
+        chain="sol", token="T", mark=1.0, notional_usd=20,
+        buy_slip=0.0, sell_slip=0.0, opened_at=opened,
+        hard_stop_pct=-0.20, early_stop_pct=-0.10, early_stop_sec=120,
+    )
+    # After the window −15% is not a stop; only −20% hard stop triggers.
+    action, reason, _ = o.evaluate(0.85, time.time())
+    assert action == Action.HOLD
+    action, reason, _ = o.evaluate(0.79, time.time())
+    assert action == Action.CLOSE and reason == "hard_stop"
+
+
 def test_hard_stop_ignores_buy_slip_entry():
     """−25% from open_mark must NOT stop when buy slip made entry 5% higher."""
     o = _order(mark=1.0, buy_slip=0.05)

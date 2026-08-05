@@ -546,7 +546,7 @@ async def test_exit_mc_aligned_to_fill_mark_not_later_quote(tmp_path):
         "token_info",
         notifier=notifier,
     )
-    opened = time.time() - 60
+    opened = time.time() - 600  # beyond early_stop window so reason stays hard_stop
     await db.conn.execute(
         """
         INSERT INTO paper_positions(

@@ -36,6 +36,10 @@ class StrategyOrder:
     timeout_extend_if_profitable: bool = False
     timeout_extend_hours: float = 1.0
     trail_dynamic: bool = True
+    # Entry protection: tighter stop (relative to open_mark) for the first
+    # early_stop_sec seconds; 0 disables.
+    early_stop_pct: float = 0.0
+    early_stop_sec: int = 0
 
     @staticmethod
     def buy_fill_price(mark: float, buy_slip: float) -> float:
@@ -68,6 +72,8 @@ class StrategyOrder:
         timeout_extend_if_profitable: bool = False,
         timeout_extend_hours: float = 1.0,
         trail_dynamic: bool = True,
+        early_stop_pct: float = 0.0,
+        early_stop_sec: int = 0,
     ) -> StrategyOrder:
         entry = cls.buy_fill_price(mark, buy_slip)
         qty = notional_usd / entry
@@ -96,6 +102,8 @@ class StrategyOrder:
             timeout_extend_if_profitable=timeout_extend_if_profitable,
             timeout_extend_hours=timeout_extend_hours,
             trail_dynamic=trail_dynamic,
+            early_stop_pct=early_stop_pct,
+            early_stop_sec=early_stop_sec,
         )
 
     def note_mark(self, mark: float) -> None:
@@ -117,8 +125,17 @@ class StrategyOrder:
         """Return (action, reason, qty_to_sell)."""
         self.note_mark(mark)
 
-        if mark <= self.open_mark * (1.0 + self.hard_stop_pct):
-            return Action.CLOSE, "hard_stop", self.qty
+        stop_pct = self.hard_stop_pct
+        stop_reason = "hard_stop"
+        if (
+            self.early_stop_sec > 0
+            and self.early_stop_pct > self.hard_stop_pct  # tighter (higher) stop
+            and (now - self.opened_at) < self.early_stop_sec
+        ):
+            stop_pct = self.early_stop_pct
+            stop_reason = "early_stop"
+        if mark <= self.open_mark * (1.0 + stop_pct):
+            return Action.CLOSE, stop_reason, self.qty
 
         # Pre-stage1 trail: protects unrealized profit if the price pumped well past
         # the activation threshold but dumps back before ever hitting stage1_tp_pct.

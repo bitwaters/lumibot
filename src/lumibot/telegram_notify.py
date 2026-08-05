@@ -36,6 +36,7 @@ WARN_LABELS = {
 
 CLOSE_REASON_LABELS = {
     "hard_stop": "硬止损",
+    "early_stop": "入场保护",
     "trail": "峰值回撤",
     "pre_stage1_trail": "回本前回撤",
     "timeout": "超时平仓",
@@ -46,6 +47,7 @@ CLOSE_REASON_LABELS = {
 
 CLOSE_ICONS = {
     "hard_stop": "📉",
+    "early_stop": "📉",
     "trail": "📉",
     "pre_stage1_trail": "📉",
     "timeout": "⌛",

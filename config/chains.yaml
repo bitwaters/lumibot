@@ -62,6 +62,7 @@ chains:
       visiting_min: 350
       visiting_min_trending: 250  # per-source knob; both sources gate on token-info visiting
       chase_max_pct: 0.05  # signal only: skip if current price ran >5% past push price (chasing top)
+      chase_max_pct_trending: 0.20  # trending payload lags; wider chase threshold
       volume_1h_min: 5000
       volume_mc_ratio_min: 0.05
       age_min_sec: 120    # reject tokens < 2 min old (dev dump risk)
@@ -90,6 +91,8 @@ chains:
     strategy:
       notional_usd: 20
       hard_stop_pct: -0.20
+      early_stop_pct: -0.15  # entry protection: tighter stop for first 120s
+      early_stop_sec: 120
       stage1_tp_pct: 0.25
       stage1_sell_mode: ratio   # ratio | notional; ratio sells a fixed fraction
       stage1_sell_ratio: 0.50   # sell 50% of qty at stage1; trail the remaining 50%
@@ -137,6 +140,7 @@ chains:
       holders_min: 100
       visiting_min: 200
       chase_max_pct: 0.10  # signal only: skip if current price ran >10% past push price (chasing top)
+      chase_max_pct_trending: 0.20  # trending payload lags; wider chase threshold
       volume_1h_min: 0
       volume_mc_ratio_min: 0
       age_min_sec: 120
@@ -165,6 +169,8 @@ chains:
     strategy:
       notional_usd: 20
       hard_stop_pct: -0.20
+      early_stop_pct: -0.15  # entry protection: tighter stop for first 120s
+      early_stop_sec: 120
       stage1_tp_pct: 0.25
       stage1_sell_mode: ratio
       stage1_sell_ratio: 0.50
@@ -210,6 +216,7 @@ chains:
       holders_min: 80
       visiting_min: 200
       chase_max_pct: 0.10  # signal only: skip if current price ran >10% past push price (chasing top)
+      chase_max_pct_trending: 0.20  # trending payload lags; wider chase threshold
       volume_1h_min: 0
       volume_mc_ratio_min: 0
       age_min_sec: 120
@@ -238,6 +245,8 @@ chains:
     strategy:
       notional_usd: 20
       hard_stop_pct: -0.20
+      early_stop_pct: -0.15  # entry protection: tighter stop for first 120s
+      early_stop_sec: 120
       stage1_tp_pct: 0.25
       stage1_sell_mode: ratio
       stage1_sell_ratio: 0.50

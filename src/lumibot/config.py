@@ -70,6 +70,9 @@ class FiltersCfg(BaseModel):
     # chase_max_pct above the push payload price (signal arrived too late, market
     # already pumped). 0 = disabled.
     chase_max_pct: float = 0.0
+    # Trending chase gate: trending payload prices can lag up to a window; use a
+    # wider threshold than chase_max_pct. 0 = disabled.
+    chase_max_pct_trending: float = 0.0
 
 
 class SafetyThresholds(BaseModel):
@@ -105,6 +108,10 @@ class ExecutionCfg(BaseModel):
 class StrategyCfg(BaseModel):
     notional_usd: float = 20
     hard_stop_pct: float = -0.30
+    # Entry protection: tighter stop for the first early_stop_sec seconds after
+    # open (relative to open_mark), then fall back to hard_stop_pct. 0 = disabled.
+    early_stop_pct: float = 0.0
+    early_stop_sec: int = 0
     stage1_tp_pct: float = 0.25
     trail_drawdown_pct: float = 0.30
     timeout_hours: float = 2
