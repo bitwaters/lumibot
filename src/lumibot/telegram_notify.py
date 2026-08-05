@@ -740,7 +740,10 @@ def render_query_card(cand: TokenCandidate) -> str:
     ]
     metrics: list[tuple[str, str]] = [
         ("💰 价格", _price(cand.price)),
-        ("💰 市值", _usd_compact(cand.market_cap)),
+        (
+            "💰 市值",
+            f"≈ {_usd_compact(cand.market_cap)}" if cand.market_cap is not None else "—",
+        ),
         ("⏱ 开盘", format_relative_age(cand.open_timestamp)),
         ("💧 流动性", _usd_compact(cand.liquidity)),
         ("👥 持有人", _num(cand.holder_count)),

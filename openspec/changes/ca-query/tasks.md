@@ -26,5 +26,5 @@
 
 - [x] 4.1 查询卡 LLM 叙事：`build_dispatcher` 接收 `narrative`；`_handle_ca_message` 回复前 `narrative_for` + `append_narrative_line`（fail-open）；`__main__` 传入 narrative_service
 - [x] 4.1 查询卡 LLM 叙事（异步 edit + 数据行）
-- [ ] 4.2 数据修复：市值 = price×supply 计算；volume 从 price 对象提取（flatten 提升）；叙事块 60 字 + 数据行（24h 涨跌/买卖笔数）
+- [x] 4.2 数据修复：市值 = price×supply 计算；volume 从 price 对象提取（flatten 提升）；叙事块 60 字 + 数据行（24h 涨跌/买卖笔数）
 - [ ] 4.3 部署后私聊/群组各发带 CA 消息验证：sol base58、bsc 0x、robinhood 0x 各一条（含 📚 叙事行）；`/status` 观察配额占用无异常

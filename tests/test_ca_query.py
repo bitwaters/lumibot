@@ -26,14 +26,22 @@ class FakeClient:
         self.infos: dict[tuple[str, str], dict | Exception] = {}
         self.secs: dict[tuple[str, str], dict | Exception] = {}
 
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+        self.cache_flags: list[bool] = []
+        self.infos: dict[tuple[str, str], dict | Exception] = {}
+        self.secs: dict[tuple[str, str], dict | Exception] = {}
+
     async def get_token_info(self, chain, address, *, use_cache=True):
         self.calls.append((chain, address))
+        self.cache_flags.append(use_cache)
         v = self.infos.get((chain, address), {})
         if isinstance(v, Exception):
             raise v
         return v
 
-    async def get_token_security(self, chain, address):
+    async def get_token_security(self, chain, address, *, use_cache=True):
+        self.cache_flags.append(use_cache)
         v = self.secs.get((chain, address), {})
         if isinstance(v, Exception):
             raise v
@@ -161,7 +169,7 @@ def test_query_card_layout():
     assert text.startswith("🔍 <b>$MUSK</b> · BSC")
     assert f"📍 CA: <code>{EVM}</code>" in text
     assert "<code>💰 价格    0.000123</code>" in text
-    assert "<code>💰 市值    $27.7K</code>" in text
+    assert "<code>💰 市值    ≈ $27.7K</code>" in text
     assert "🔥 热度" in text
     assert "🦈 聪明钱" in text and "🎩 KOL" in text
     assert "卖税 1.0%" in text
@@ -411,7 +419,7 @@ def test_query_card_shows_volume_and_mc():
         market_cap=17_897, volume_1h=21_874.86, liquidity=6_000, holder_count=106,
     )
     text = render_query_card(cand)
-    assert "市值    $17.9K" in text
+    assert "市值    ≈ $17.9K" in text
     assert "1H 成交 $21.9K" in text
 
 
@@ -425,3 +433,11 @@ def test_narrative_block_data_line():
     assert "🛒 买 1,200 / 卖 800" in block
     assert render_narrative_block(info, None) == ""
     assert render_narrative_block(None, "仅叙事") == "📚 仅叙事"
+
+
+@pytest.mark.asyncio
+async def test_query_uses_fresh_data_no_cache():
+    client = FakeClient()
+    client.infos[("bsc", EVM)] = _info()
+    _, _, _ = await _query_token(client, EVM, _app())
+    assert client.cache_flags == [False, False], client.cache_flags

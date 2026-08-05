@@ -284,10 +284,13 @@ class GmgnClient:
         self.cache.set("info", chain, address, result)
         return result
 
-    async def get_token_security(self, chain: str, address: str) -> dict[str, Any]:
-        cached = self.security_cache.get("security", chain, address)
-        if cached is not None:
-            return cached
+    async def get_token_security(
+        self, chain: str, address: str, *, use_cache: bool = True
+    ) -> dict[str, Any]:
+        if use_cache:
+            cached = self.security_cache.get("security", chain, address)
+            if cached is not None:
+                return cached
         data = await self._request(
             "GET",
             "/v1/token/security",
