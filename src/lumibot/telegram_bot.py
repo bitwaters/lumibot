@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -25,11 +26,11 @@ from lumibot.models import Source, TokenCandidate
 from lumibot.narrative import NarrativeService
 from lumibot.safety import evaluate_safety, normalize_security
 from lumibot.telegram_notify import (
-    append_narrative_line,
     gmgn_keyboard,
     render_alerts,
     render_help,
     render_positions,
+    render_narrative_block,
     render_query_card,
     render_rejects,
     render_reset_paper,
@@ -90,6 +91,20 @@ def _as_float(v: object) -> float | None:
         return None
 
 
+def _market_cap_from_info(info: dict) -> float | None:
+    """market cap = price.price × circulating_supply (token_info omits market_cap)."""
+    px = info.get("price")
+    price = None
+    if isinstance(px, dict):
+        price = _as_float(px.get("price"))
+    else:
+        price = _as_float(px)
+    supply = _as_float(info.get("circulating_supply") or info.get("total_supply"))
+    if price is None or price <= 0 or supply is None or supply <= 0:
+        return None
+    return price * supply
+
+
 async def _query_token(
     client: GmgnClient,
     addr: str,
@@ -107,6 +122,9 @@ async def _query_token(
             continue
         cand = TokenCandidate(chain=chain, address=addr, source=Source.TRENDING)
         merge_info_fields(cand, info, force_visiting=True)
+        # GMGN token_info does NOT return market_cap; compute price × supply.
+        if cand.market_cap is None:
+            cand.market_cap = _market_cap_from_info(info)
         wts = info.get("wallet_tags_stat")
         if isinstance(wts, dict):
             cand.smart_wallets = _as_float(wts.get("smart_wallets"))
@@ -158,18 +176,44 @@ async def _handle_ca_message(
         await reply("🔍 未找到该合约（支持 sol / bsc / robinhood）。", parse_mode="HTML")
         return True
     card = render_query_card(cand)
-    if narrative is not None:
-        try:
-            narrative_line = await narrative.narrative_for(cand, info or {})
-            card = append_narrative_line(card, narrative_line)
-        except Exception:  # noqa: BLE001 — pure display, fail open
-            logger.warning("ca query narrative failed chain=%s addr=%s", chain, addr)
-    await reply(
+    sent = await reply(
         card,
         parse_mode="HTML",
         reply_markup=gmgn_keyboard(chain, addr),
     )
+    if narrative is not None and sent is not None:
+        # Narrative is a slow LLM call: reply first, then enrich via message edit.
+        asyncio.create_task(
+            _enrich_query_narrative(narrative, cand, info or {}, sent),
+            name=f"ca-narrative-{addr}",
+        )
     return True
+
+
+async def _enrich_query_narrative(
+    narrative: NarrativeService,
+    cand: TokenCandidate,
+    info: dict,
+    sent: Message,
+) -> None:
+    """Append the 📚 narrative block to a fresh query reply; fail-open."""
+    try:
+        line = await narrative.narrative_for(cand, info)
+        block = render_narrative_block(info, line)
+        if not block:
+            return
+        await sent.bot.edit_message_text(
+            chat_id=sent.chat.id,
+            message_id=sent.message_id,
+            text=f"{sent.text}\n{block}",
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=sent.reply_markup,
+        )
+    except Exception:  # noqa: BLE001 — pure display
+        logger.warning(
+            "ca query narrative failed chain=%s token=%s", cand.chain, cand.address
+        )
 
 BOT_COMMANDS_COMMON: list[BotCommand] = [
     BotCommand(command="positions", description="当前模拟持仓"),

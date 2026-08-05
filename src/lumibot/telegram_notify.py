@@ -259,6 +259,42 @@ def append_narrative_line(card: str, narrative_line: str | None) -> str:
     return "\n".join(lines)
 
 
+def render_narrative_block(
+    info: dict | None, narrative_line: str | None
+) -> str:
+    """Rich narrative block: 📚 LLM sentence + data-backed line (24h change, buys/sells)."""
+    if not narrative_line:
+        return ""
+    lines = [f"📚 {_esc(narrative_line)}"]
+    if info:
+        px = info.get("price")
+        price = px.get("price") if isinstance(px, dict) else None
+        price_24h = px.get("price_24h") if isinstance(px, dict) else None
+        chg = None
+        p_now, p_old = _narrative_float(price), _narrative_float(price_24h)
+        if p_now is not None and p_now > 0 and p_old is not None and p_old > 0:
+            chg = (p_now / p_old) - 1.0
+        buys = px.get("buys_24h") if isinstance(px, dict) else None
+        sells = px.get("sells_24h") if isinstance(px, dict) else None
+        bits: list[str] = []
+        if chg is not None:
+            bits.append(f"24h {chg * 100:+.1f}%")
+        if buys is not None or sells is not None:
+            bits.append(f"🛒 买 {_num(_narrative_float(buys))} / 卖 {_num(_narrative_float(sells))}")
+        if bits:
+            lines.append(f"📈 {' · '.join(bits)}")
+    return "\n".join(lines)
+
+
+def _narrative_float(v: object) -> float | None:
+    try:
+        if v is None or v == "":
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def render_paper_event(ev: PaperTradeEvent) -> str:
     tag = _chain_tag(ev.chain)
     sym = ev.symbol or ev.token[:8]
@@ -945,7 +981,9 @@ class TelegramNotifier:
         paper_status: str | None = None,
         message_ids: list[tuple[int, int]],
         narrative_line: str,
+        info: dict | None = None,
     ) -> tuple[bool, bool]:
+        block = render_narrative_block(info, narrative_line)
         return await self.edit_text(
             append_narrative_line(
                 render_card(
@@ -954,7 +992,7 @@ class TelegramNotifier:
                     latency_sec=latency_sec,
                     paper_status=paper_status,
                 ),
-                narrative_line,
+                block,
             ),
             message_ids,
             reply_markup=gmgn_keyboard(cand.chain, cand.address),

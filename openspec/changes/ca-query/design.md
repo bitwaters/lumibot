@@ -38,8 +38,8 @@ bot 当前对一切非命令文本回复「未知指令」（`telegram_bot.py` f
 
 3. **卡片组装复用现有路径**
    - 候选构造 `TokenCandidate(chain, address, source=Source.TRENDING)`（source 仅作必填字段，查询卡渲染不读）；`merge_info_fields(cand, info, force_visiting=True)` 填充；`evaluate_safety(chain_cfg.safety_profile, normalize_security(sec), chain_cfg.safety)` 得安全行。
-   - `render_query_card(cand)`: 标题 `🔍 {hbold('$'+sym)} · {chain_tag}`；`📍 CA:` code；`📊 指标` 网格 = 价格行（💰 价格，独占）+ 市值行（💰 市值，独占，无触发参照）+ 开盘/流动性 + 持有人/Top10 + 热度/1H 成交 + 聪明钱/KOL（`wallet_tags_stat.smart_wallets/renowned_wallets`，spike 验证两链返回）+ 平台；`_safety_line` 原样复用；无状态行。
-   - **LLM 叙事（📚）**：查询回复前 `await narrative.narrative_for(cand, info)`（复用 NarrativeService，走其缓存与 eligibility），命中则 `append_narrative_line` 追加 `📚` 行作为末行；失败/不可用 fail-open 不影响回复。查询是交互式单次回复（用户已在等待），不做信号卡的异步 edit 流程。
+   - `render_query_card(cand)`: 标题 `🔍 {hbold('$'+sym)} · {chain_tag}`；`📍 CA:` code；`📊 指标` 网格 = 价格行（💰 价格，独占）+ 市值行（💰 市值 = price×circulating_supply 计算，GMGN 不返回）+ 开盘/流动性 + 持有人/Top10 + 热度/1H 成交（`volume_1h` 从嵌套 `price` 对象提取，顶层为 null）+ 聪明钱/KOL（`wallet_tags_stat`，spike 验证两链返回）+ 平台；`_safety_line` 原样复用；无状态行。
+   - **LLM 叙事（📚，异步 edit）**：查询先即时回复，再 `asyncio.create_task` 异步 `narrative_for(cand, info)` → `render_narrative_block`（📚 叙事句 + 📈 数据行：24h 涨跌 + 24h 买卖笔数，取自 `price` 对象）→ `edit_message_text` 追加到刚回复的消息。**延迟修复**：实测叙事 LLM 调用（timeout 10s）同步 await 导致回复延迟 4-15s，改为回复后异步编辑，回复延迟只含 GMGN 请求（~2-4s）。信号卡 `edit_candidate_with_narrative` 同样传入 info 输出数据行，保持一致。
    - 查询硬失败（hard_fail）不拒答——与信号管道 `_reject` 路径分叉，仅渲染警告。
 
 4. **节流与降级**

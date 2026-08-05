@@ -13,7 +13,7 @@ from lumibot.models import TokenCandidate
 
 logger = logging.getLogger(__name__)
 
-NARRATIVE_MAX_LEN = 30
+NARRATIVE_MAX_LEN = 60
 _NARRATIVE_NA = {"N/A", "NA", "无", "未知", ""}
 
 
@@ -85,10 +85,12 @@ class NarrativeCache:
 
 
 SYSTEM_PROMPT = (
-    "你是加密 meme 币分析助手。根据代币名称、简介和官网域名，"
-    f"用不超过 {NARRATIVE_MAX_LEN} 个汉字的一句话描述它的叙事/主题"
-    '（如"特朗普概念官方迷因币"、"AI Agent 概念"）。信息不足时输出 "N/A"。'
-    '只输出 JSON: {"narrative": "..."}'
+    "你是加密 meme 币叙事分析师。根据代币名称、简介和官网域名，"
+    f"用不超过 {NARRATIVE_MAX_LEN} 个汉字写一句信息量丰富的叙事描述，"
+    "要求：1) 点明主题/概念（如特朗普概念、AI Agent、动物 meme）；"
+    "2) 给出定位或背景（如官方项目/社区接管/仿盘、近期热度来源）；"
+    "3) 若简介含明确风险线索（如仿盘、无官网、开发者锁仓）如实点出。"
+    "信息不足时输出 \"N/A\"。只输出 JSON: {\"narrative\": \"...\"}"
 )
 
 

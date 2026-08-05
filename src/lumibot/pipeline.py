@@ -580,6 +580,7 @@ class ChainPipeline:
                 paper=paper,
                 message_ids=message_ids,
                 narrative_line=narrative_line,
+                info=info,
             )
         except Exception:  # noqa: BLE001
             logger.exception("narrative_edit_failed chain=%s token=%s", cand.chain, cand.address)

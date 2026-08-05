@@ -184,7 +184,7 @@ def extract_trending_fields(raw: dict) -> dict[str, float | None]:
 
 
 def flatten_token_info(info: dict) -> dict:
-    """Lift nested GMGN token_info fields (stat/pool) into a flat dict for extractors."""
+    """Lift nested GMGN token_info fields (stat/pool/price) into a flat dict for extractors."""
     flat = dict(info)
     stat = info.get("stat")
     if isinstance(stat, dict):
@@ -198,6 +198,15 @@ def flatten_token_info(info: dict) -> dict:
     pool = info.get("pool")
     if isinstance(pool, dict) and flat.get("liquidity") is None and pool.get("liquidity") is not None:
         flat["liquidity"] = pool.get("liquidity")
+    # token_info keeps trading stats (volume, buys/sells) nested in the price object.
+    price = info.get("price")
+    if isinstance(price, dict):
+        if flat.get("volume_1h") is None and price.get("volume_1h") is not None:
+            flat["volume_1h"] = price.get("volume_1h")
+        if flat.get("price") is None and price.get("price") is not None:
+            flat["price"] = price.get("price")
+        if flat.get("price_24h") is None and price.get("price_24h") is not None:
+            flat["price_24h"] = price.get("price_24h")
     return flat
 
 

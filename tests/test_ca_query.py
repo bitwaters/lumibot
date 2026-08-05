@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from lumibot.config import load_app_config
@@ -308,14 +310,32 @@ class FakeNarrative:
         return self.line
 
 
+class _FakeSent:
+    def __init__(self, text: str, edits: list) -> None:
+        self.text = text
+        self.reply_markup = None
+        self.chat = type("C", (), {"id": 1})()
+        self.message_id = 42
+        self.edits = edits
+
+        async def fake_edit(*args, **kwargs):
+            edits.append((args, kwargs))
+
+        self.bot = type("B", (), {"edit_message_text": fake_edit})()
+
+
 @pytest.mark.asyncio
-async def test_handle_ca_message_appends_narrative():
+async def test_handle_ca_message_narrative_async_edit():
     client = FakeClient()
-    client.infos[("bsc", EVM)] = _info()
+    client.infos[("bsc", EVM)] = _info(
+        price={"price": "1.0", "price_24h": "0.5", "buys_24h": 1200, "sells_24h": 800}
+    )
     replies: list[tuple] = []
+    edits: list[tuple] = []
 
     async def reply(*args, **kwargs):
         replies.append((args, kwargs))
+        return _FakeSent(args[0], edits)
 
     handled = await _handle_ca_message(
         chat_id=1,
@@ -327,7 +347,13 @@ async def test_handle_ca_message_appends_narrative():
         narrative=FakeNarrative(line="马斯克概念 meme，社区热度高"),
     )
     assert handled is True
-    assert "📚 马斯克概念 meme，社区热度高" in replies[0][0][0]
+    # Reply is immediate and does NOT contain the narrative (async edit).
+    assert "📚" not in replies[0][0][0]
+    await asyncio.sleep(0.05)
+    assert edits, "narrative edit task should have fired"
+    edited_text = edits[0][1]["text"]
+    assert "📚 马斯克概念 meme，社区热度高" in edited_text
+    assert "24h +100.0%" in edited_text
 
 
 @pytest.mark.asyncio
@@ -351,3 +377,51 @@ async def test_handle_ca_message_narrative_fail_open():
     assert handled is True
     assert "📚" not in replies[0][0][0]
     assert replies[0][0][0].startswith("🔍 <b>$MUSK</b>")
+
+
+def test_market_cap_computed_from_price_times_supply():
+    from lumibot.telegram_bot import _market_cap_from_info
+
+    info = {
+        "price": {"price": "0.000017897718"},
+        "circulating_supply": "1000000000",
+    }
+    assert _market_cap_from_info(info) is not None
+    assert abs(_market_cap_from_info(info) - 17_897.718) < 1.0
+    assert _market_cap_from_info({"price": None, "circulating_supply": "1"}) is None
+    assert _market_cap_from_info({"price": {"price": "0"}, "circulating_supply": "1"}) is None
+
+
+@pytest.mark.asyncio
+async def test_query_token_computes_market_cap():
+    client = FakeClient()
+    client.infos[("bsc", EVM)] = _info(
+        price={"price": "0.000017897718", "volume_1h": "21874.86", "buys_24h": 1172, "sells_24h": 943},
+        circulating_supply="1000000000",
+    )
+    chain, cand, _ = await _query_token(client, EVM, _app())
+    assert chain == "bsc"
+    assert cand.market_cap is not None and cand.market_cap > 10_000
+    assert cand.volume_1h == 21_874.86
+
+
+def test_query_card_shows_volume_and_mc():
+    cand = TokenCandidate(
+        chain="bsc", address=EVM, source=Source.TRENDING, symbol="MUSK",
+        market_cap=17_897, volume_1h=21_874.86, liquidity=6_000, holder_count=106,
+    )
+    text = render_query_card(cand)
+    assert "市值    $17.9K" in text
+    assert "1H 成交 $21.9K" in text
+
+
+def test_narrative_block_data_line():
+    from lumibot.telegram_notify import render_narrative_block
+
+    info = {"price": {"price": "1.0", "price_24h": "0.5", "buys_24h": 1200, "sells_24h": 800}}
+    block = render_narrative_block(info, "特朗普概念官方迷因币，X 讨论度上升")
+    assert "📚 特朗普概念官方迷因币，X 讨论度上升" in block
+    assert "24h +100.0%" in block
+    assert "🛒 买 1,200 / 卖 800" in block
+    assert render_narrative_block(info, None) == ""
+    assert render_narrative_block(None, "仅叙事") == "📚 仅叙事"

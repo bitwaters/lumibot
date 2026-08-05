@@ -130,6 +130,7 @@ class FakeNotifier:
         message_ids: list[tuple[int, int]] | None = None,
         paper_status: str | None = None,
         narrative_line: str = "",
+        info: dict | None = None,
     ) -> tuple[bool, bool]:
         self.calls.append("edit_narrative")
         self.narratives.append(narrative_line)
