@@ -135,10 +135,8 @@ class NarrativeService:
         link = info.get("link") if isinstance(info.get("link"), dict) else {}
         desc = str(link.get("description") or "").strip()[:200]
         website = str(link.get("website") or "").strip()[:100]
-        user = (
-            f"symbol={cand.symbol} name={cand.name} "
-            f"desc={desc} website={website}"
-        )
+        name = (cand.name or "").strip()
+        user = f"symbol={cand.symbol} name={name} desc={desc} website={website}"
         data = await self.client.complete(system=SYSTEM_PROMPT, user=user)
         narrative = self._extract(data)
         if narrative is None:

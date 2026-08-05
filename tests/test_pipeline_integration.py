@@ -966,4 +966,39 @@ async def test_narrative_edit_fires_on_opened_only(tmp_path):
     )
     await asyncio.sleep(0)
     assert notifier3.calls.count("edit_narrative") == 0
+
+    # already_open state -> no narrative lookup, no edit
+    await db.try_open_paper(
+        "sol", "tokX", 1.0, 20.0, 20.0, peak_price=1.0, open_mark=1.0, symbol="TOKENX"
+    )
+    notifier4 = FakeNotifier()
+    narrative4 = FakeNarrative("should-not-fire")
+    pipe4 = ChainPipeline(
+        "sol",
+        app.chains["sol"],
+        app,
+        client,
+        db,
+        notifier4,
+        narrative=narrative4,  # type: ignore[arg-type]
+    )
+    client.info["n4"] = _pass_info()
+    client.security["n4"] = _pass_security_sol()
+    client.prices["n4"] = 1.0
+    await pipe4._handle_signal(
+        {
+            "address": "tokX",
+            "signal_type": 12,
+            "symbol": "TOKENX",
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+            "price": 1.0,
+        }
+    )
+    await asyncio.sleep(0)
+    assert narrative4.calls == []
+    assert notifier4.calls.count("edit_narrative") == 0
     await db.close()
