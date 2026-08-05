@@ -1,4 +1,5 @@
 import time
+from html.parser import HTMLParser
 
 from lumibot.config import load_app_config
 from lumibot.exec_types import ExecResult, PaperTradeEvent
@@ -22,7 +23,36 @@ from lumibot.telegram_notify import (
     render_rounds,
     render_stats,
     render_status,
+    render_unknown_command,
 )
+
+
+_ALLOWED_TAGS = {"b", "code", "a"}
+
+
+class _HtmlCheck(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.stack: list[str] = []
+        self.errors: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag not in _ALLOWED_TAGS:
+            self.errors.append(f"unexpected tag <{tag}>")
+        self.stack.append(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self.stack or self.stack[-1] != tag:
+            self.errors.append(f"mismatched </{tag}>")
+        else:
+            self.stack.pop()
+
+
+def _assert_html_ok(text: str) -> None:
+    checker = _HtmlCheck()
+    checker.feed(text)
+    assert checker.errors == [], checker.errors
+    assert checker.stack == [], checker.stack
 
 
 def _cand(**kw) -> TokenCandidate:
@@ -342,7 +372,7 @@ def test_help_and_positions_cards():
     assert "<code>硬止损     1/2       止损率     50.0%</code>" in text
     assert "close_reason=hard_stop" not in text
     assert "含回本减仓后再次硬止损" in text
-    assert "/reset_paper <sol|bsc|robinhood|all> confirm" in text
+    assert "/reset_paper &lt;sol|bsc|robinhood|all&gt; confirm" in text
     hint = render_reset_paper_hint()
     assert "/reset_paper sol confirm" in hint
     assert "将清空" in hint
@@ -597,9 +627,9 @@ def test_help_omits_reset_when_requested():
     app = load_app_config("config/chains.yaml")
     with_reset = render_help(app, enabled_chains=["sol"], include_reset=True)
     no_reset = render_help(app, enabled_chains=["sol"], include_reset=False)
-    assert "/reset_paper <sol|bsc|robinhood|all> confirm" in with_reset
+    assert "/reset_paper &lt;sol|bsc|robinhood|all&gt; confirm" in with_reset
     assert "仅限私聊控制台" in no_reset
-    assert "/reset_paper <sol|bsc|robinhood|all> confirm" not in no_reset
+    assert "/reset_paper &lt;sol|bsc|robinhood|all&gt; confirm" not in no_reset
     assert "命令：/positions /stats /alerts /status /rejects /rounds" in no_reset
     assert "/reset_paper" not in no_reset.splitlines()[3]
 
@@ -609,3 +639,54 @@ def test_help_command_order_matches_menu():
     text = render_help(app, enabled_chains=["sol"], include_reset=True)
     cmd_line = text.splitlines()[3]
     assert cmd_line.startswith("命令：/positions /stats /alerts /status /rejects /rounds /reset_paper /chatid")
+
+
+def test_all_cards_html_is_well_formed():
+    """Every card must be valid HTML for parse_mode=HTML (regression: raw
+    <sol|...> in command hints broke /stats /help /rounds replies)."""
+    app = load_app_config("config/chains.yaml")
+    cand = _cand()
+    cand_trending = _cand(source=Source.TRENDING, trigger_mc=None)
+    close_ev = PaperTradeEvent(kind="close", chain="sol", token="Tok123", symbol="ABC", reason="hard_stop", mark=0.8, fill_price=0.76, qty=20, pnl=-2.5, notional_usd=20, entry_price=1.0, entry_mc=100_000, exit_mc=80_000, hold_sec=192)
+    close_ev_fallback = PaperTradeEvent(kind="close", chain="bsc", token="TokBsc", symbol="DOGE", reason="hard_stop", mark=0.8, fill_price=0.76, qty=25, pnl=-5.0, notional_usd=25, entry_price=1.0)
+    stage1_ev = PaperTradeEvent(kind="stage1", chain="sol", token="TokStage", symbol="STG", reason="stage1", mark=1.3, fill_price=1.235, qty=10, pnl=2.0, notional_usd=20, entry_price=1.05, remaining_qty=10, entry_mc=100_000, exit_mc=130_000)
+    pos_row = {
+        "chain": "sol", "token": "TokABCFullContract", "symbol": "ABC",
+        "entry_price": 1.05, "open_mark": 1.0, "peak_price": 1.5,
+        "cost_basis": 1.0, "qty": 20.0, "notional_usd": 20.0, "stage1_done": 0,
+    }
+    summary = {
+        "open_count": 2, "closed_count": 3, "closed_pnl": 1.5, "open_notional": 40.0,
+        "opened_count": 5, "skipped_open_count": 2, "hard_stop_count": 1,
+        "win_count": 2, "avg_win_usd": 2.25, "avg_loss_usd": -1.0, "avg_hold_sec": 2700,
+    }
+    round_row = {"round_id": 1786123456, "positions": 18, "closed_count": 15, "open_count": 3, "closed_pnl": 24.5}
+    round_detail = {"round_id": 1786123456, "chain": None, "closed_count": 15, "open_count": 3, "closed_pnl": 24.5, "win_rate": 0.53, "hard_stop_count": 4, "avg_win_usd": 6.1, "avg_loss_usd": -2.3}
+
+    cards = [
+        render_card(cand, paper=ExecResult(status="opened", notional_usd=20), latency_sec=1.8),
+        render_card(cand, paper_status="opening", latency_sec=1.8),
+        render_card(cand, paper=ExecResult(status="skipped_open"), latency_sec=0.5),
+        render_card(cand_trending, paper_status="opening"),
+        render_card(_cand(market_cap=None, trigger_mc=None, liquidity=None, top10_rate=None, holder_count=None, visiting_count=None, volume_1h=None, platform=None, open_timestamp=None), paper_status="opening"),
+        append_news_line(render_card(cand, paper_status="opening"), "📰 相关 <b>bold</b> & text"),
+        render_paper_event(close_ev),
+        render_paper_event(close_ev_fallback),
+        render_paper_event(stage1_ev),
+        render_positions([pos_row], quotes={("sol", "TokABCFullContract"): {"price": 1.2, "market_cap": 120_000}}),
+        render_positions([], quotes={}),
+        render_stats(per_chain={"sol": (summary, []), "bsc": ({}, [])}),
+        render_rejects([{"chain": "sol", "source": "signal", "reason": "mc", "count": 3}]),
+        render_status(chain_rows=[{"name": "sol", "mode": "paper", "open_count": 2, "cooldowns": 1}]),
+        render_alerts(rows=[{"chain": "sol", "token": "SolTok", "created_at": 1_700_000_000, "payload_json": '{"symbol":"S","exec_status":"opened"}'}]),
+        render_rounds([round_row]),
+        render_rounds([], detail=[round_detail]),
+        render_rounds([]),
+        render_reset_paper_hint(),
+        render_reset_paper({"paper_positions": 3, "paper_fills": 8, "paper_skip_opens": 2, "cooldowns": 6, "alerts": 12, "reject_counts": 33}, chain="sol"),
+        render_help(app, enabled_chains=["sol"], include_reset=True),
+        render_help(app, enabled_chains=["sol"], include_reset=False),
+        render_unknown_command(),
+    ]
+    for card in cards:
+        _assert_html_ok(card)

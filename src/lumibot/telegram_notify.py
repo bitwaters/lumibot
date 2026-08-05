@@ -440,7 +440,7 @@ def render_stats(
         lines.append("")
     lines.append("注：硬止损计数含回本减仓后再次硬止损的仓位。")
     lines.append("")
-    lines.append("用 /reset_paper <sol|bsc|robinhood|all> confirm 清空模拟（持仓/告警/拦截/冷却）")
+    lines.append("用 /reset_paper &lt;sol|bsc|robinhood|all&gt; confirm 清空模拟（持仓/告警/拦截/冷却）")
     return "\n".join(lines)
 
 
@@ -498,7 +498,7 @@ def render_rounds(
                 )
             )
         lines.append("")
-        lines.append("用 /rounds <id> 查看某轮详情（例如 /rounds 1786123456）。")
+        lines.append("用 /rounds &lt;id&gt; 查看某轮详情（例如 /rounds 1786123456）。")
     else:
         rid = detail[0]["round_id"] if detail else rows[0]["round_id"]
         lines.append(hbold(f"round #{rid} 详情"))
@@ -678,7 +678,7 @@ def render_help(
     )
     if include_reset:
         lines.append(
-            "· /reset_paper <sol|bsc|robinhood|all> confirm 清空对应链的本轮模拟统计（旧数据归档，/rounds 可查）"
+            "· /reset_paper &lt;sol|bsc|robinhood|all&gt; confirm 清空对应链的本轮模拟统计（旧数据归档，/rounds 可查）"
         )
     else:
         lines.append("· /reset_paper 仅限私聊控制台（群组不可用）")
