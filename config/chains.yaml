@@ -8,7 +8,7 @@ global:
   security_cache_ttl_sec: 3600
   price_source: token_info  # token_info | kline
   news:
-    enabled: false
+    enabled: true
     poll_sec: 60
     lookback_min: 120
     min_score: 0.6
