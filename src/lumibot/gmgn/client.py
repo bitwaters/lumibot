@@ -112,6 +112,9 @@ class GmgnClient:
         self.security_cache = EnrichmentCache(
             security_cache_ttl_sec if security_cache_ttl_sec is not None else cache_ttl_sec
         )
+        # When GMGN bans the IP (429 + RATE_LIMIT_BANNED), fail fast without any
+        # HTTP call until reset_at. Polling loops then stop re-triggering the ban.
+        self._suspended_until: float = 0.0
 
     async def aclose(self) -> None:
         return None
@@ -154,6 +157,14 @@ class GmgnClient:
         weight: float = 1.0,
     ) -> Any:
         await self.limiter.acquire(weight)
+        now = time.time()
+        if now < self._suspended_until:
+            # Fail fast without touching the network: a banned IP must not emit
+            # further 429s, or the ban window keeps re-arming.
+            raise RuntimeError(
+                f"GMGN IP banned until {self._suspended_until:.0f}; "
+                f"requests fail fast for {self._suspended_until - now:.0f}s"
+            )
         q = self._auth_query(query)
         url = f"{HOST}{path}?{urlencode(q, doseq=True)}"
         headers = {
@@ -183,6 +194,16 @@ class GmgnClient:
                         wait = 5.0
                 wait = min(wait, 60.0)
                 logger.warning("GMGN 429 on %s %s, backoff %.1fs", method, path, wait)
+                reset_ts: float | None = None
+                if reset_at is not None:
+                    try:
+                        reset_ts = float(reset_at)
+                    except (TypeError, ValueError):
+                        reset_ts = None
+                self._suspended_until = max(
+                    self._suspended_until,
+                    reset_ts if reset_ts is not None else time.time() + wait,
+                )
                 if attempt == 0 and wait <= 5.0:
                     await asyncio.sleep(wait)
                     await self.limiter.acquire(weight)
