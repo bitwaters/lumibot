@@ -8,15 +8,15 @@ OpenSpec 归档里的 design / delta specs 可能仍写着历史数字（例如�
 
 ## 键位（按链）
 
-出场 / 名义 / 冷却全部在 **`chains.<name>.strategy`**，不再有顶层 `strategy` 真源。
+出场 / 单仓投入 / 冷却全部在 **`chains.<name>.strategy`**，不再有顶层 `strategy` 真源。
 
 | 区域 | 键 | 含义 |
 |------|----|------|
 | `chains.<name>.strategy` | `hard_stop_pct` / `stage1_tp_pct` / `trail_drawdown_pct` / `timeout_hours` | 出场（`stage1_tp_pct` 相对 **买入成本含买滑点**；硬止损相对开仓标记） |
-| `chains.<name>.strategy` | `stage1_sell_mode` / `stage1_sell_ratio` | 回本减仓：`ratio` 固定比例 / `notional` 回收名义 |
+| `chains.<name>.strategy` | `stage1_sell_mode` / `stage1_sell_ratio` | 回本减仓：`ratio` 固定比例 / `notional` 回收本金 |
 | `chains.<name>.strategy` | `pre_stage1_trail_*` / `timeout_extend_*` / `trail_dynamic` | 回本前追踪、盈利延时、动态回撤 |
 | `chains.<name>.strategy` | `loss_cooldown_min` / `post_close_cooldown_min` / `symbol_cooldown_min` | 再入场冷却（`0`=关；symbol 冷却按同名币拦截） |
-| `chains.<name>.strategy` | `notional_usd` / `snapshots_sec` | Paper 名义；快照 offset |
+| `chains.<name>.strategy` | `notional_usd` / `snapshots_sec` | Paper 单仓投入；快照 offset |
 | `chains.<name>.filters` | `mc_*` / `liquidity_min` / `liquidity_ratio_min` / `top10_max` / `holders_min` / `visiting_min` / `visiting_min_trending` | 门禁 |
 | `chains.<name>.filters` | `volume_1h_min` / `volume_mc_ratio_min` / `age_*` | 量与年龄 |
 | `chains.<name>.filters` | `max_mc_extension` / `enforce_mc_extension` | 市值延伸 |

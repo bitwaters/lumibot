@@ -32,19 +32,19 @@ from lumibot.telegram_notify import (
 logger = logging.getLogger(__name__)
 
 BOT_COMMANDS_COMMON: list[BotCommand] = [
-    BotCommand(command="start", description="开始 / 帮助"),
-    BotCommand(command="help", description="查看帮助与模拟规则"),
-    BotCommand(command="chatid", description="显示当前 chat_id（配群用）"),
     BotCommand(command="positions", description="当前模拟持仓"),
-    BotCommand(command="stats", description="模拟盈亏统计"),
-    BotCommand(command="rejects", description="筛选拦截原因"),
+    BotCommand(command="stats", description="盈亏统计"),
     BotCommand(command="alerts", description="最近告警"),
-    BotCommand(command="rounds", description="历史轮次归档查询"),
     BotCommand(command="status", description="运行状态"),
+    BotCommand(command="rejects", description="拦截原因 Top"),
+    BotCommand(command="rounds", description="历史轮次"),
+    BotCommand(command="help", description="帮助与模拟规则"),
+    BotCommand(command="start", description="开始使用"),
+    BotCommand(command="chatid", description="获取 chat_id（配群用）"),
 ]
 
 BOT_COMMANDS_PRIVATE_ONLY: list[BotCommand] = [
-    BotCommand(command="reset_paper", description="清空本轮模拟（需 confirm）"),
+    BotCommand(command="reset_paper", description="清空模拟（需 confirm）"),
 ]
 
 # Full menu for private / default scope (includes reset).
@@ -174,13 +174,13 @@ def build_dispatcher(
     async def cmd_start(message: Message) -> None:
         if not _authorized(message):
             return
-        await message.answer(_help_text(message), parse_mode=None)
+        await message.answer(_help_text(message), parse_mode="HTML")
 
     @router.message(Command("help"))
     async def cmd_help(message: Message) -> None:
         if not _authorized(message):
             return
-        await message.answer(_help_text(message), parse_mode=None)
+        await message.answer(_help_text(message), parse_mode="HTML")
 
     @router.message(Command("positions"))
     async def cmd_positions(message: Message) -> None:
@@ -198,7 +198,7 @@ def build_dispatcher(
             except Exception:  # noqa: BLE001
                 logger.exception("quote for position failed")
                 quotes[key] = {"price": None, "market_cap": None}
-        await message.answer(render_positions(rows, quotes=quotes), parse_mode=None)
+        await message.answer(render_positions(rows, quotes=quotes), parse_mode="HTML")
 
     @router.message(Command("stats"))
     async def cmd_stats(message: Message) -> None:
@@ -210,14 +210,14 @@ def build_dispatcher(
             summary = await db.paper_stats_summary(name)
             closed = await db.list_recent_closed_papers(5, chain=name)
             per_chain[name] = (summary, closed)
-        await message.answer(render_stats(per_chain=per_chain), parse_mode=None)
+        await message.answer(render_stats(per_chain=per_chain), parse_mode="HTML")
 
     @router.message(Command("rejects"))
     async def cmd_rejects(message: Message) -> None:
         if not _authorized(message):
             return
         rows = await db.top_reject_reasons(15)
-        await message.answer(render_rejects(rows), parse_mode=None)
+        await message.answer(render_rejects(rows), parse_mode="HTML")
 
     @router.message(Command("alerts"))
     async def cmd_alerts(message: Message) -> None:
@@ -227,7 +227,7 @@ def build_dispatcher(
         per_chain: dict[str, list] = {}
         for name in chains:
             per_chain[name] = await db.list_recent_alerts(ALERTS_PER_CHAIN, chain=name)
-        await message.answer(render_alerts(per_chain=per_chain), parse_mode=None)
+        await message.answer(render_alerts(per_chain=per_chain), parse_mode="HTML")
 
     @router.message(Command("status"))
     async def cmd_status(message: Message) -> None:
@@ -247,7 +247,7 @@ def build_dispatcher(
                     "cooldowns": cool,
                 }
             )
-        await message.answer(render_status(chain_rows=chain_rows), parse_mode=None)
+        await message.answer(render_status(chain_rows=chain_rows), parse_mode="HTML")
 
     @router.message(Command("rounds"))
     async def cmd_rounds(message: Message) -> None:
@@ -264,18 +264,18 @@ def build_dispatcher(
             if not detail:
                 await message.answer(
                     f"📦 round #{round_id} 无数据（用 /rounds 查看可用的轮次）。",
-                    parse_mode=None,
+                    parse_mode="HTML",
                 )
                 return
             all_summ = await db.archive_round_stats(round_id, chain=None)
             recent = await db.list_archive_closed_papers(round_id, limit=5)
             await message.answer(
                 render_rounds([], detail=[all_summ, *detail], recent_closed=recent),
-                parse_mode=None,
+                parse_mode="HTML",
             )
             return
         rows = await db.list_archive_rounds(20)
-        await message.answer(render_rounds(rows), parse_mode=None)
+        await message.answer(render_rounds(rows), parse_mode="HTML")
 
     @router.message(Command("reset_paper"))
     async def cmd_reset_paper(message: Message) -> None:
@@ -284,7 +284,7 @@ def build_dispatcher(
         if not _can_reset(message):
             await message.answer(
                 "⛔ /reset_paper 仅限私聊控制台使用，群组禁止清空模拟。",
-                parse_mode=None,
+                parse_mode="HTML",
             )
             return
         parts = (message.text or "").split()
@@ -292,7 +292,7 @@ def build_dispatcher(
         # BREAKING: scope (chain|all) is now required. Bare `/reset_paper confirm`
         # (no scope) no longer deletes anything — it just re-shows the hint.
         if len(parts) != 3 or parts[1].lower() not in valid_scopes or parts[2].lower() != "confirm":
-            await message.answer(render_reset_paper_hint(), parse_mode=None)
+            await message.answer(render_reset_paper_hint(), parse_mode="HTML")
             return
         chain = parts[1].lower()
         deleted = await db.reset_paper_experiment(chain)
@@ -302,13 +302,13 @@ def build_dispatcher(
             message.chat.id,
             deleted,
         )
-        await message.answer(render_reset_paper(deleted, chain=chain), parse_mode=None)
+        await message.answer(render_reset_paper(deleted, chain=chain), parse_mode="HTML")
 
     @router.message(F.text)
     async def fallback(message: Message) -> None:
         if not _authorized(message):
             return
-        await message.answer(render_unknown_command(), parse_mode=None)
+        await message.answer(render_unknown_command(), parse_mode="HTML")
 
     dp.include_router(router)
     return dp

@@ -39,3 +39,4 @@ class PaperTradeEvent:
     exit_mc: float | None = None
     peak_mc: float | None = None
     hold_sec: float | None = None
+    sell_mode: str = "notional"  # notional | ratio; cost-wording of stage1 cards

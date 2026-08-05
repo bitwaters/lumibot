@@ -294,7 +294,7 @@ async def test_happy_path_alerts_and_opens_paper(harness):
     assert abs(row["entry_price"] - entry) < 1e-9
     assert notifier.cards
     card = notifier.cards[0]
-    assert "📡 [SOL] 信号推送" in card
+    assert "📡 <b>$TEST</b> · SOL" in card
     assert "⏳ 开仓中" in card
     edited_card = notifier.cards[-1]
     assert "✅ 已开仓" in edited_card
@@ -535,7 +535,7 @@ async def test_fresh_quote_without_mc_clears_card_mc(harness):
     )
     assert notifier.paper_status == ["opening", "opened"]
     assert await db.get_open_paper("sol", "nomc") is not None
-    assert "💰 市值 —" in notifier.cards[0]
+    assert "市值 <b>—</b>" in notifier.cards[0]
     assert "$100.0K" not in notifier.cards[0]
 
 

@@ -241,6 +241,7 @@ class PaperExecutor(Executor):
                     exit_mc=exit_mc,
                     peak_mc=peak_mc,
                     hold_sec=now - float(row["opened_at"]),
+                    sell_mode=order.stage1_sell_mode,
                 )
             )
         elif action == Action.CLOSE:

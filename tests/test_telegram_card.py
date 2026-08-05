@@ -3,25 +3,30 @@ import time
 from lumibot.config import load_app_config
 from lumibot.exec_types import ExecResult, PaperTradeEvent
 from lumibot.models import NormalizedSafety, Source, TokenCandidate
-from lumibot.telegram_bot import BOT_COMMANDS
+from lumibot.telegram_bot import BOT_COMMANDS, BOT_COMMANDS_GROUP
 from lumibot.telegram_notify import (
     append_news_line,
+    dexscreener_link,
     gmgn_keyboard,
     gmgn_link,
     reject_reason_label,
     reject_source_label,
+    render_alerts,
     render_card,
     render_help,
     render_paper_event,
     render_positions,
     render_rejects,
+    render_reset_paper,
     render_reset_paper_hint,
+    render_rounds,
     render_stats,
+    render_status,
 )
 
 
-def test_signal_push_card_layout():
-    cand = TokenCandidate(
+def _cand(**kw) -> TokenCandidate:
+    base = dict(
         chain="sol",
         address="SoLAddr123FullContractAddress",
         source=Source.SIGNAL,
@@ -35,6 +40,8 @@ def test_signal_push_card_layout():
         top10_rate=0.22,
         holder_count=320,
         visiting_count=210,
+        volume_1h=8_100,
+        platform="pump.fun",
         open_timestamp=time.time() - 12 * 60,
         safety=NormalizedSafety(
             renounced_mint=True,
@@ -42,75 +49,112 @@ def test_signal_push_card_layout():
             warnings=["creator_hold"],
             rug_ratio=0.05,
             bundler_rate=0.12,
+            buy_tax=0.05,
+            sell_tax=0.05,
         ),
     )
+    base.update(kw)
+    return TokenCandidate(**base)
+
+
+def test_signal_push_card_layout():
+    cand = _cand()
     paper = ExecResult(status="opened", notional_usd=20, open_mark=0.00123)
     text = render_card(cand, paper=paper, latency_sec=1.8)
-    assert text.startswith("📡 [SOL] 信号推送  $PEPE")
-    assert "SoLAddr123FullContractAddress" in text
-    assert "🕐 开盘" in text
-    assert "💰 市值 $125.0K → 触发 $100.0K" in text
-    assert "💧 流动性 $18.0K  ·  👥 320" in text
-    assert "📊 Top10 22.0%  ·  🔥 210" in text
-    assert "🛡 安全 通过" in text
-    assert "⏱ 延迟 1.8s" in text
-    assert "✅ 已开仓 $20.00" in text
+    assert text.startswith("📡 <b>$PEPE</b> · SOL")
+    assert "<b>📊 指标</b>" in text
+    assert "📍 CA: <code>SoLAddr123FullContractAddress</code>" in text
+    assert "💰 市值 <b>$125.0K</b> → 触发 <b>$100.0K</b>" in text
+    assert "⏱ 开盘 <b>12m</b>" in text
+    assert "💧 流动性 <b>$18.0K</b>" in text
+    assert "👥 持有人 <b>320</b>" in text
+    assert "👑 Top10 持有 <b>22.0%</b>" in text
+    assert "🔥 热度 <b>210</b>" in text
+    assert "🚀 1H 成交 <b>$8.1K</b>" in text
+    assert "🏭 pump.fun" in text
+    assert "买税 5.0% · 卖税 5.0%" in text
+    assert "⚠ 开发者持仓" in text
+    assert "<b>✅ 已开仓 $20.00</b> · ⏱ 延迟 1.8s" in text
     assert "类型12" not in text
     assert "聪明钱" not in text
     assert "开仓标记" not in text
     assert "命令 /positions" not in text
     assert "策略 名义" not in text
     kb = gmgn_keyboard("sol", "SoLAddr123FullContractAddress")
+    assert [b.text for b in kb.inline_keyboard[0]] == ["打开 GMGN", "DexScreener"]
     assert kb.inline_keyboard[0][0].url == gmgn_link("sol", "SoLAddr123FullContractAddress")
+    assert kb.inline_keyboard[0][1].url == dexscreener_link("sol", "SoLAddr123FullContractAddress")
 
 
-def test_skipped_open_brief():
-    cand = TokenCandidate(
-        chain="sol",
-        address="Addr",
-        source=Source.TRENDING,
-        symbol="X",
-        market_cap=50_000,
-        liquidity=10_000,
-        top10_rate=0.1,
-        holder_count=100,
-        visiting_count=80,
+def test_signal_card_dual_source_badge():
+    text = render_card(_cand(dual_source=True), paper_status="opening")
+    assert "📡 <b>$PEPE</b> · SOL · 双源" in text
+    assert "<b>⏳ 开仓中</b> · ⏱ 延迟 —" in text
+
+
+def test_signal_card_trending_without_trigger():
+    cand = _cand(source=Source.TRENDING, trigger_mc=None)
+    text = render_card(cand, paper_status="opening")
+    assert "💰 市值 <b>$125.0K</b>" in text
+    assert "→ 触发" not in text
+    assert "📡 <b>$PEPE</b> · SOL" in text
+
+
+def test_signal_card_missing_metrics_dash():
+    cand = _cand(
+        market_cap=None,
+        trigger_mc=None,
+        liquidity=None,
+        top10_rate=None,
+        holder_count=None,
+        visiting_count=None,
+        volume_1h=None,
+        platform=None,
+        open_timestamp=None,
     )
-    text = render_card(cand, paper=ExecResult(status="skipped_open"), latency_sec=0.5)
-    assert "📡 [SOL] 信号推送" in text
-    assert "⏭ 未新开（已有仓）" in text
-    assert "热门趋势" not in text
+    text = render_card(cand, paper_status="opening", latency_sec=None)
+    assert "💰 市值 <b>—</b>" in text
+    assert "💧 流动性 <b>—</b>" in text
+    assert "👑 Top10 持有 <b>—</b>" in text
+    assert "🚀 1H 成交 <b>—</b>" in text
+    assert "🏭" not in text
 
 
-def test_precheck_skipped_open_brief():
-    cand = TokenCandidate(
-        chain="sol",
-        address="Addr",
-        source=Source.TRENDING,
-        symbol="X",
-        market_cap=50_000,
-        liquidity=10_000,
-        top10_rate=0.1,
-        holder_count=100,
-        visiting_count=80,
-    )
-    text = render_card(cand, paper=ExecResult(status="opening"), paper_status="precheck_skipped_open")
-    assert "↪️ 未新开" in text
+def test_signal_card_tax_hidden_when_zero():
+    safety = NormalizedSafety()
+    text = render_card(_cand(safety=safety), paper_status="opening")
+    assert "🛡 安全 通过" in text
+    assert "买税" not in text
+    assert "卖税" not in text
+
+
+def test_signal_card_escapes_external_data():
+    cand = _cand(symbol="PEPE<3", address="addr<&>")
+    text = render_card(cand, paper_status="opening")
+    assert "PEPE&lt;3" in text
+    assert "addr&lt;&amp;&gt;" in text
+    assert "<b>PEPE<3</b>" not in text
+
+
+def test_status_line_states():
+    cand = _cand()
+    cases = [
+        (ExecResult(status="skipped_open"), "⏭ 未新开（已有仓）"),
+        (ExecResult(status="blocked_max_positions"), "⛔ 未新开（已达持仓上限）"),
+        (ExecResult(status="no_price"), "⛔ 未开仓（无价格）"),
+        (ExecResult(status="blocked_live"), "⛔ 实盘已阻断"),
+    ]
+    for paper, marker in cases:
+        text = render_card(cand, paper=paper, latency_sec=0.5)
+        assert f"<b>{marker}</b> · ⏱ 延迟 0.5s" in text
+    text = render_card(cand, paper_status="precheck_skipped_open")
+    assert "<b>↪️ 未新开</b>" in text
+    text = render_card(cand, paper_status="executor_error")
+    assert "<b>⛔ 执行异常</b>" in text
 
 
 def test_append_news_line_freeze_insert():
-    cand = TokenCandidate(
-        chain="sol",
-        address="SoLAddr123FullContractAddress",
-        source=Source.SIGNAL,
-        symbol="PEPE",
-        price=0.00123,
-        market_cap=125_000,
-        liquidity=18_000,
-        top10_rate=0.22,
-        holder_count=320,
-        visiting_count=210,
-    )
+    cand = _cand()
     base = render_card(cand, paper=ExecResult(status="opened", notional_usd=20, open_mark=0.00123), latency_sec=1.8)
     news_line = "📰 相关 token-specific update"
     enriched = append_news_line(base, news_line)
@@ -122,18 +166,7 @@ def test_append_news_line_freeze_insert():
 
 
 def test_append_news_line_replaces_existing_news_line():
-    cand = TokenCandidate(
-        chain="sol",
-        address="Addr",
-        source=Source.TRENDING,
-        symbol="X",
-        market_cap=50_000,
-        liquidity=10_000,
-        top10_rate=0.1,
-        holder_count=100,
-        visiting_count=80,
-    )
-    base = render_card(cand, paper=ExecResult(status="opening"), paper_status="opening")
+    base = render_card(_cand(), paper_status="opening")
     first = append_news_line(base, "📰 相关 first hit")
     second = append_news_line(first, "📰 市场 market-wide update")
     lines = second.splitlines()
@@ -141,19 +174,14 @@ def test_append_news_line_replaces_existing_news_line():
     assert lines[-1] == "📰 市场 market-wide update"
 
 
+def test_append_news_line_escapes_external_content():
+    base = render_card(_cand(), paper_status="opening")
+    enriched = append_news_line(base, "📰 <b>bold</b> & <script>")
+    assert enriched.splitlines()[-1] == "📰 &lt;b&gt;bold&lt;/b&gt; &amp; &lt;script&gt;"
+
+
 def test_append_news_line_none_returns_original():
-    cand = TokenCandidate(
-        chain="sol",
-        address="Addr",
-        source=Source.TRENDING,
-        symbol="X",
-        market_cap=50_000,
-        liquidity=10_000,
-        top10_rate=0.1,
-        holder_count=100,
-        visiting_count=80,
-    )
-    base = render_card(cand, paper=ExecResult(status="opening"), paper_status="opening")
+    base = render_card(_cand(), paper_status="opening")
     assert append_news_line(base, None) == base
     assert append_news_line(base, "") == base
 
@@ -177,12 +205,56 @@ def test_paper_close_event_card():
             hold_sec=192,
         )
     )
-    assert "📉 [SOL] 硬止损  $ABC  -$2.50" in text
-    assert "Tok123" in text
-    assert "入场 $100.0K → 平仓 $80.0K" in text
+    assert "📉 <b>$ABC</b> · SOL · 硬止损  <b>-$2.50</b>" in text
+    assert "📍 CA: <code>Tok123</code>" in text
+    assert "💰 入场市值 <b>$100.0K</b> → 平仓市值 <b>$80.0K</b>" in text
+    assert "⏱ 持仓 3m · 投入 <b>$20.00</b>" in text
 
 
-def test_paper_stage1_event_uses_mc():
+def test_paper_close_peak_and_timeout():
+    text = render_paper_event(
+        PaperTradeEvent(
+            kind="close",
+            chain="sol",
+            token="Tok123",
+            symbol="ABC",
+            reason="trail",
+            mark=1.2,
+            fill_price=1.18,
+            qty=20,
+            pnl=3.6,
+            notional_usd=24,
+            entry_price=1.0,
+            entry_mc=100_000,
+            exit_mc=120_000,
+            peak_mc=135_000,
+            hold_sec=900,
+        )
+    )
+    assert "📈 峰值 <b>$135.0K</b>" in text
+
+
+def test_paper_close_price_fallback_labels():
+    text = render_paper_event(
+        PaperTradeEvent(
+            kind="close",
+            chain="bsc",
+            token="TokBsc",
+            symbol="DOGE",
+            reason="hard_stop",
+            mark=0.8,
+            fill_price=0.76,
+            qty=25,
+            pnl=-5.0,
+            notional_usd=25,
+            entry_price=1.0,
+        )
+    )
+    assert "标记价 0.8 · 盈亏 <b>-$5.00</b>" in text
+    assert "投入 <b>$25.00</b> · 入场价 1" in text
+
+
+def test_paper_stage1_notional_mode():
     text = render_paper_event(
         PaperTradeEvent(
             kind="stage1",
@@ -199,13 +271,38 @@ def test_paper_stage1_event_uses_mc():
             remaining_qty=10,
             entry_mc=100_000,
             exit_mc=130_000,
+            sell_mode="notional",
         )
     )
-    assert "✂️ [SOL] 回本减仓  $STG" in text
-    assert "TokStage" in text
-    assert "入场 $100.0K → 减仓 $130.0K" in text
-    assert "回收约" in text
-    assert "📌 成本已上移" in text
+    assert "✂️ <b>$STG</b> · SOL · 回本减仓" in text
+    assert "📍 CA: <code>TokStage</code>" in text
+    assert "💰 入场市值 <b>$100.0K</b> → 减仓市值 <b>$130.0K</b>" in text
+    assert "💰 回收约 <b>$12.35</b> · 剩余仓位继续持有" in text
+    assert "📌 已回本 · 剩余仓位零成本" in text
+
+
+def test_paper_stage1_ratio_mode():
+    text = render_paper_event(
+        PaperTradeEvent(
+            kind="stage1",
+            chain="sol",
+            token="TokStage",
+            symbol="STG",
+            reason="stage1",
+            mark=1.3,
+            fill_price=1.235,
+            qty=10,
+            pnl=2.0,
+            notional_usd=20,
+            entry_price=1.05,
+            remaining_qty=10,
+            entry_mc=100_000,
+            exit_mc=130_000,
+            sell_mode="ratio",
+        )
+    )
+    assert "📌 剩余仓位成本按减仓价计算" in text
+    assert "已回本 · 剩余仓位零成本" not in text
 
 
 def test_help_and_positions_cards():
@@ -216,11 +313,19 @@ def test_help_and_positions_cards():
     sol_strategy = app.chains["sol"].strategy
     assert "/stats" in help_text
     assert "/reset_paper" in help_text
-    assert "过门后重拉" in help_text or "过门后重取" in help_text
+    assert "筛选通过后信号推送" in help_text
+    assert "筛选通过后重拉的实时 token 快照" in help_text
+    assert "不二次筛选" in help_text
     assert "⏱ 延迟" in help_text
+    assert "单仓投入" in help_text
+    assert "买入" in help_text and "卖出" in help_text
     assert _pct(sol_strategy.hard_stop_pct) in help_text
-    assert _pct(sol_strategy.stage1_tp_pct) in help_text
-    assert _pct(sol_strategy.trail_drawdown_pct) in help_text
+    assert f"盈利 {_pct(sol_strategy.stage1_tp_pct)} 触发回本减仓" in help_text
+    if sol_strategy.stage1_sell_mode == "ratio":
+        assert f"减仓 比例 {_pct(sol_strategy.stage1_sell_ratio)}" in help_text
+    else:
+        assert "减仓 回收本金" in help_text
+    assert f"剩余仓位峰值回撤 {_pct(sol_strategy.trail_drawdown_pct)} 平仓" in help_text
     assert "📋 持仓 0 笔" in render_positions([])
     summary = {
         "open_count": 1,
@@ -234,19 +339,19 @@ def test_help_and_positions_cards():
     text = render_stats(summary, [])
     assert "📊 模拟统计" in text
     assert "[SOL]" in text
-    assert "本轮开仓 5  ·  跳过开仓 2" in text
-    assert "硬止损 1/2" in text
-    assert "close_reason=hard_stop" in text
+    assert "投入 <b>$20.00</b>" in text
+    assert "本轮开仓 <b>5</b>  ·  跳过开仓 <b>2</b>" in text
+    assert "硬止损 <b>1/2</b>" in text
+    assert "close_reason=hard_stop" not in text
+    assert "含回本减仓后再次硬止损" in text
     assert "/reset_paper <sol|bsc|robinhood|all> confirm" in text
-    assert "相对买入成本" in help_text or "含买滑点" in help_text
     hint = render_reset_paper_hint()
     assert "/reset_paper sol confirm" in hint
     assert "将清空" in hint
+    assert "快照" not in hint
 
 
 def test_stats_status_alerts_are_per_chain():
-    from lumibot.telegram_notify import render_alerts, render_status
-
     sol_sum = {
         "open_count": 2,
         "closed_count": 1,
@@ -274,10 +379,9 @@ def test_stats_status_alerts_are_per_chain():
         }
     )
     assert "[SOL]" in text and "[BSC]" in text
-    assert "本轮开仓 3" in text
-    assert "跳过开仓 1" in text
-    # No blended primary totals line like "持仓 2" at the top without a chain tag
-    assert text.splitlines()[0] == "📊 模拟统计"
+    assert "本轮开仓 <b>3</b>" in text
+    assert "跳过开仓 <b>1</b>" in text
+    assert text.splitlines()[0] == "<b>📊 模拟统计</b>"
 
     status = render_status(
         chain_rows=[
@@ -285,10 +389,9 @@ def test_stats_status_alerts_are_per_chain():
             {"name": "bsc", "mode": "paper", "open_count": 0, "cooldowns": 0},
         ]
     )
-    assert "[SOL] paper  ·  持仓 2  ·  冷却 1" in status
-    assert "[BSC] paper  ·  持仓 0  ·  冷却 0" in status
+    assert "<b>[SOL]</b> paper  ·  持仓 <b>2</b>  ·  冷却 <b>1</b>" in status
+    assert "<b>[BSC]</b> paper  ·  持仓 <b>0</b>  ·  冷却 <b>0</b>" in status
 
-    # Busy SOL must not hide BSC when alerts are fetched per chain
     alerts = render_alerts(
         per_chain={
             "sol": [
@@ -310,9 +413,10 @@ def test_stats_status_alerts_are_per_chain():
             ],
         }
     )
-    assert "[SOL]" in alerts and "[BSC]" in alerts
-    assert "BscTok" in alerts
+    assert "<b>[SOL]</b>" in alerts and "<b>[BSC]</b>" in alerts
+    assert "✅开仓" in alerts
     assert "双源" in alerts
+    assert "<code>BscTok</code>" in alerts
 
 
 def test_positions_grouped_by_chain():
@@ -343,8 +447,9 @@ def test_positions_grouped_by_chain():
         },
     ]
     text = render_positions(rows, quotes={})
-    assert "[SOL]" in text and "[BSC]" in text
-    assert "SolA" in text and "BscB" in text
+    assert "<b>[SOL]" in text and "<b>[BSC]" in text
+    assert "投入 <b>$30.00</b>" in text
+    assert "<code>SolA</code>" in text and "<code>BscB</code>" in text
 
 
 def test_positions_use_market_cap_not_price():
@@ -364,12 +469,12 @@ def test_positions_use_market_cap_not_price():
         [row],
         quotes={("sol", "TokABCFullContract"): {"price": 1.2, "market_cap": 120_000}},
     )
-    assert "TokABCFullContract" in text
-    assert "入场 $100.0K → 现 $120.0K" in text
-    assert "峰 $150.0K" in text
+    assert "<code>TokABCFullContract</code>" in text
+    assert "入场 <b>$100.0K</b> → 现 <b>$120.0K</b>" in text
+    assert "峰 <b>$150.0K</b>" in text
 
 
-def test_positions_price_fallback_when_mc_missing():
+def test_positions_price_fallback_labels():
     row = {
         "chain": "sol",
         "token": "TokNoMc",
@@ -386,55 +491,108 @@ def test_positions_price_fallback_when_mc_missing():
         [row],
         quotes={("sol", "TokNoMc"): {"price": 1.2, "market_cap": None}},
     )
-    assert "入场 1 → 现 1.2" in text
-    assert "峰 1.5" in text
-    assert "TokNoMc" in text
+    assert "入场价 1 → 现价 1.2" in text
+    assert "峰值 1.5" in text
+    assert "<code>TokNoMc</code>" in text
 
 
-def test_reject_labels():
+def test_reject_labels_and_render():
     assert reject_reason_label("mc") == "市值"
     assert reject_reason_label("loss_cooldown") == "亏损冷却"
     assert reject_reason_label("too_new") == "过新"
     assert reject_reason_label("liq_ratio") == "流动性占比"
-
     assert reject_reason_label("no_price") == "无有效价格"
     assert reject_source_label("signal") == "信号"
     text = render_rejects(
         [{"chain": "sol", "source": "signal", "reason": "mc", "count": 3}]
     )
-    assert "信号 / 市值 × 3" in text
+    assert "· [sol] 信号 / 市值 × <b>3</b>" in text
+    assert "<b>🚫 拦截 Top</b>" in text
+
+
+def test_rounds_cards():
+    text = render_rounds(
+        [
+            {"round_id": 1786123456, "positions": 18, "closed_count": 15, "open_count": 3, "closed_pnl": 24.5},
+        ]
+    )
+    assert "<b>📦 归档轮次</b>" in text
+    assert "已实现 <b>+$24.50</b>" in text
+
+    text = render_rounds(
+        [],
+        detail=[
+            {"round_id": 1786123456, "chain": None, "closed_count": 15, "open_count": 3, "closed_pnl": 24.5, "win_rate": 0.53, "hard_stop_count": 4, "avg_win_usd": 6.1, "avg_loss_usd": -2.3},
+        ],
+    )
+    assert "round #1786123456 详情" in text
+    assert "已实现 <b>+$24.50</b>" in text
+    assert "均盈 <b>+$6.10</b>" in text
+    assert "均亏 <b>-$2.30</b>" in text
+    assert "均赢" not in text
+    assert "$-2.30" not in text
+
+    assert "暂无历史轮次" in render_rounds([])
+
+
+def test_reset_paper_cards():
+    text = render_reset_paper(
+        {"paper_positions": 3, "paper_fills": 8, "paper_skip_opens": 2, "cooldowns": 6, "alerts": 12, "reject_counts": 33, "round_id": 123},
+        chain="sol",
+    )
+    assert "🧹 [SOL] 模拟已重置" in text
+    assert "持仓 <b>3</b>" in text
+    assert "仓位行" not in text
+    assert "快照" not in text
+    assert "round #123" in text
+
+
+def test_dexscreener_chain_aware():
+    kb = gmgn_keyboard("sol", "Addr")
+    assert [b.text for b in kb.inline_keyboard[0]] == ["打开 GMGN", "DexScreener"]
+    kb = gmgn_keyboard("bsc", "Addr")
+    assert [b.text for b in kb.inline_keyboard[0]] == ["打开 GMGN", "DexScreener"]
+    kb = gmgn_keyboard("robinhood", "Addr")
+    assert [b.text for b in kb.inline_keyboard[0]] == ["打开 GMGN"]
+    assert dexscreener_link("robinhood", "Addr") is None
+    assert dexscreener_link("sol", "Addr") == "https://dexscreener.com/solana/Addr"
 
 
 def test_bot_quick_commands():
-    from lumibot.telegram_bot import BOT_COMMANDS_GROUP
-
     names = [c.command for c in BOT_COMMANDS]
     assert names == [
-        "start",
-        "help",
-        "chatid",
         "positions",
         "stats",
-        "rejects",
         "alerts",
-        "rounds",
         "status",
+        "rejects",
+        "rounds",
+        "help",
+        "start",
+        "chatid",
         "reset_paper",
     ]
     group_names = [c.command for c in BOT_COMMANDS_GROUP]
     assert "reset_paper" not in group_names
     assert group_names == [
-        "start",
-        "help",
-        "chatid",
         "positions",
         "stats",
-        "rejects",
         "alerts",
-        "rounds",
         "status",
+        "rejects",
+        "rounds",
+        "help",
+        "start",
+        "chatid",
     ]
     assert all(c.description for c in BOT_COMMANDS)
+    desc = {c.command: c.description for c in BOT_COMMANDS}
+    assert desc["positions"] == "当前模拟持仓"
+    assert desc["stats"] == "盈亏统计"
+    assert desc["rejects"] == "拦截原因 Top"
+    assert desc["rounds"] == "历史轮次"
+    assert desc["help"] == "帮助与模拟规则"
+    assert desc["reset_paper"] == "清空模拟（需 confirm）"
 
 
 def test_help_omits_reset_when_requested():
@@ -444,5 +602,12 @@ def test_help_omits_reset_when_requested():
     assert "/reset_paper <sol|bsc|robinhood|all> confirm" in with_reset
     assert "仅限私聊控制台" in no_reset
     assert "/reset_paper <sol|bsc|robinhood|all> confirm" not in no_reset
-    assert "命令：/positions" in no_reset
+    assert "命令：/positions /stats /alerts /status /rejects /rounds" in no_reset
     assert "/reset_paper" not in no_reset.splitlines()[3]
+
+
+def test_help_command_order_matches_menu():
+    app = load_app_config("config/chains.yaml")
+    text = render_help(app, enabled_chains=["sol"], include_reset=True)
+    cmd_line = text.splitlines()[3]
+    assert cmd_line.startswith("命令：/positions /stats /alerts /status /rejects /rounds /reset_paper /chatid")

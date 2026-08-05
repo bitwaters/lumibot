@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import logging
 import time
@@ -7,6 +8,7 @@ from datetime import datetime, timezone
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.utils.markdown import hbold, hcode
 
 from lumibot.config import AppConfig
 from lumibot.exec_types import ExecResult, PaperTradeEvent
@@ -20,6 +22,11 @@ GMGN_URL = {
     "sol": "https://gmgn.ai/sol/token/{addr}",
     "bsc": "https://gmgn.ai/bsc/token/{addr}",
     "robinhood": "https://gmgn.ai/rh/token/{addr}",
+}
+
+DEXSCREENER_URL = {
+    "sol": "https://dexscreener.com/solana/{addr}",
+    "bsc": "https://dexscreener.com/bsc/{addr}",
 }
 
 WARN_LABELS = {
@@ -101,16 +108,28 @@ REASON_LABELS = {
 }
 
 
+def _esc(v: object) -> str:
+    """HTML-escape external data before insertion into card text."""
+    return html.escape(str(v), quote=False)
+
+
 def gmgn_link(chain: str, address: str) -> str:
     return GMGN_URL.get(chain, "https://gmgn.ai/token/{addr}").format(addr=address)
 
 
+def dexscreener_link(chain: str, address: str) -> str | None:
+    template = DEXSCREENER_URL.get(chain)
+    if template is None:
+        return None
+    return template.format(addr=address)
+
+
 def gmgn_keyboard(chain: str, address: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="打开 GMGN", url=gmgn_link(chain, address))]
-        ]
-    )
+    buttons = [InlineKeyboardButton(text="打开 GMGN", url=gmgn_link(chain, address))]
+    ds_url = dexscreener_link(chain, address)
+    if ds_url is not None:
+        buttons.append(InlineKeyboardButton(text="DexScreener", url=ds_url))
+    return InlineKeyboardMarkup(inline_keyboard=[buttons])
 
 
 def reject_reason_label(reason: str) -> str:
@@ -156,34 +175,62 @@ def render_card(
     latency_sec: float | None = None,
     paper_status: str | None = None,
 ) -> str:
-    """Unified signal-push card (plain text)."""
+    """Unified signal-push card (HTML rich text)."""
     sym = cand.symbol or "未知"
-    title = f"📡 [{cand.chain_tag}] 信号推送  ${sym}"
+    title = f"📡 {hbold('$' + sym)} · {_esc(cand.chain_tag)}"
     if cand.dual_source:
-        title += "  ·  双源"
+        title += " · 双源"
     lines = [
         title,
         "",
-        cand.address,
+        f"📍 CA: {hcode(cand.address)}",
         "",
-        f"🕐 开盘 {format_relative_age(cand.open_timestamp)}",
-        _mc_line(cand),
-        f"💧 流动性 {_usd_compact(cand.liquidity)}  ·  👥 {_num(cand.holder_count)}",
-        f"📊 Top10 {_pct(cand.top10_rate)}  ·  🔥 {_num(cand.visiting_count)}",
-        "",
-        _safety_line(cand),
-        "",
-        f"⏱ 延迟 {format_latency(latency_sec)}",
-        _paper_line(paper, paper_status=paper_status),
+        hbold("📊 指标"),
     ]
+    has_trigger = (
+        cand.source == Source.SIGNAL
+        and cand.trigger_mc is not None
+        and cand.trigger_mc > 0
+        and cand.market_cap is not None
+    )
+    if has_trigger:
+        chg = (cand.market_cap / cand.trigger_mc) - 1.0
+        lines.append(
+            f"💰 市值 {hbold(_usd_compact(cand.market_cap))} → 触发 "
+            f"{hbold(_usd_compact(cand.trigger_mc))}  ({_pct(chg)})"
+        )
+        lines.append(_metric_pair("⏱ 开盘", format_relative_age(cand.open_timestamp), "💧 流动性", _usd_compact(cand.liquidity)))
+        lines.append(_metric_pair("👥 持有人", _num(cand.holder_count), "👑 Top10 持有", _pct(cand.top10_rate)))
+        lines.append(_metric_pair("🔥 热度", _num(cand.visiting_count), "🚀 1H 成交", _usd_compact(cand.volume_1h)))
+        if cand.platform:
+            lines.append(f"🏭 {_esc(cand.platform)}")
+    else:
+        lines.append(_metric_pair("💰 市值", _usd_compact(cand.market_cap), "⏱ 开盘", format_relative_age(cand.open_timestamp)))
+        lines.append(_metric_pair("💧 流动性", _usd_compact(cand.liquidity), "👥 持有人", _num(cand.holder_count)))
+        lines.append(_metric_pair("👑 Top10 持有", _pct(cand.top10_rate), "🔥 热度", _num(cand.visiting_count)))
+        last = f"🚀 1H 成交 {hbold(_usd_compact(cand.volume_1h))}"
+        if cand.platform:
+            last += f"    🏭 {_esc(cand.platform)}"
+        lines.append(last)
+    lines.extend(
+        [
+            "",
+            _safety_line(cand),
+            _status_line(paper, paper_status=paper_status, latency_sec=latency_sec),
+        ]
+    )
     return "\n".join(lines)
+
+
+def _metric_pair(label_a: str, value_a: str, label_b: str, value_b: str) -> str:
+    return f"{label_a} {hbold(value_a)}    {label_b} {hbold(value_b)}"
 
 
 def append_news_line(card: str, news_line: str | None) -> str:
     if not news_line:
         return card
     lines = [line for line in card.splitlines() if not line.startswith("📰")]
-    lines.append(news_line)
+    lines.append(_esc(news_line))
     return "\n".join(lines)
 
 
@@ -193,43 +240,47 @@ def render_paper_event(ev: PaperTradeEvent) -> str:
     reason = CLOSE_REASON_LABELS.get(ev.reason, ev.reason)
     icon = CLOSE_ICONS.get(ev.reason, "📉")
     pnl_s = _pnl(ev.pnl)
+    title = f"{icon} {hbold('$' + sym)} · {_esc(tag)} · {reason}  {hbold(pnl_s)}"
 
     if ev.kind == "stage1":
         lines = [
-            f"{icon} [{tag}] 回本减仓  ${sym}  {pnl_s}",
+            title,
             "",
-            ev.token,
+            f"📍 CA: {hcode(ev.token)}",
             "",
         ]
         if ev.entry_mc is not None and ev.exit_mc is not None and ev.entry_mc > 0:
             chg = (ev.exit_mc / ev.entry_mc) - 1.0
             lines.append(
-                f"💰 入场 {_usd_compact(ev.entry_mc)} → 减仓 {_usd_compact(ev.exit_mc)}  ({_pct(chg)})"
+                f"💰 入场市值 {hbold(_usd_compact(ev.entry_mc))} → 减仓市值 "
+                f"{hbold(_usd_compact(ev.exit_mc))}  ({_pct(chg)})"
             )
-        lines.append(f"💰 回收约 {_usd_compact(ev.qty * ev.fill_price)}  ·  剩余仓继续")
-        lines.append("📌 成本已上移")
+        lines.append(f"💰 回收约 {hbold(_usd_compact(ev.qty * ev.fill_price))} · 剩余仓位继续持有")
+        if ev.sell_mode == "notional":
+            lines.append("📌 已回本 · 剩余仓位零成本")
+        else:
+            lines.append("📌 剩余仓位成本按减仓价计算")
         return "\n".join(lines)
 
     lines = [
-        f"{icon} [{tag}] {reason}  ${sym}  {pnl_s}",
+        title,
         "",
-        ev.token,
+        f"📍 CA: {hcode(ev.token)}",
         "",
     ]
     if ev.entry_mc is not None and ev.exit_mc is not None and ev.entry_mc > 0:
         chg = (ev.exit_mc / ev.entry_mc) - 1.0
         lines.append(
-            f"💰 入场 {_usd_compact(ev.entry_mc)} → 平仓 {_usd_compact(ev.exit_mc)}  ({_pct(chg)})"
+            f"💰 入场市值 {hbold(_usd_compact(ev.entry_mc))} → 平仓市值 "
+            f"{hbold(_usd_compact(ev.exit_mc))}  ({_pct(chg)})"
         )
-        extra = f"名义 {_usd_compact(ev.notional_usd)}"
-        if ev.hold_sec is not None:
-            extra = f"⏱ 持仓 {format_duration(ev.hold_sec)}  ·  {extra}"
+        extra = f"⏱ 持仓 {format_duration(ev.hold_sec)} · 投入 {hbold(_usd_compact(ev.notional_usd))}"
         if ev.reason == "trail" and ev.peak_mc is not None:
-            extra = f"📈 峰值 {_usd_compact(ev.peak_mc)}  ·  {extra}"
+            extra = f"📈 峰值 {hbold(_usd_compact(ev.peak_mc))} · {extra}"
         lines.append(extra)
     else:
-        lines.append(f"标记价 {_price(ev.mark)}  ·  盈亏 {pnl_s}")
-        lines.append(f"名义 {_usd_compact(ev.notional_usd)}  ·  入场 {_price(ev.entry_price)}")
+        lines.append(f"标记价 {_price(ev.mark)} · 盈亏 {hbold(pnl_s)}")
+        lines.append(f"投入 {hbold(_usd_compact(ev.notional_usd))} · 入场价 {_price(ev.entry_price)}")
     return "\n".join(lines)
 
 
@@ -248,12 +299,12 @@ def render_positions(
 
     total_n = len(rows)
     total_notional = sum(float(r["notional_usd"] or 0) for r in rows)
-    lines = [f"📋 持仓 {total_n} 笔  ·  名义 {_usd_compact(total_notional)}", ""]
+    lines = [f"📋 持仓 {total_n} 笔 · 投入 {hbold(_usd_compact(total_notional))}", ""]
 
     for chain, chain_rows in by_chain.items():
         tag = _chain_tag(chain)
         chain_notional = sum(float(r["notional_usd"] or 0) for r in chain_rows)
-        lines.append(f"[{tag}] {len(chain_rows)} 笔  ·  {_usd_compact(chain_notional)}")
+        lines.append(hbold(f"[{tag}] {len(chain_rows)} 笔 · {_usd_compact(chain_notional)}"))
         for i, row in enumerate(chain_rows, 1):
             sym = row["symbol"] or row["token"][:8]
             q = quotes.get((row["chain"], row["token"])) or {}
@@ -274,20 +325,22 @@ def render_positions(
             if entry_mc and mark_mc and entry_mc > 0:
                 chg = (mark_mc / entry_mc) - 1.0
             stage = "已回本" if row["stage1_done"] else "未回本"
-            head = f"{i}. ${sym}"
+            head = f"{i}. {hbold('$' + sym)}"
             if chg is not None:
                 head += f"  {_pct(chg)}"
             if u_pnl is not None:
-                head += f"  ·  浮盈 {_pnl(u_pnl)}"
+                head += f"  ·  浮盈 {hbold(_pnl(u_pnl))}"
             lines.append(head)
-            lines.append(f"   {row['token']}")
+            lines.append(f"   {hcode(row['token'])}")
             if entry_mc is not None and mark_mc is not None:
                 lines.append(
-                    f"   入场 {_usd_compact(entry_mc)} → 现 {_usd_compact(mark_mc)}  ·  峰 {_usd_compact(peak_mc)}  ·  {stage}"
+                    f"   入场 {hbold(_usd_compact(entry_mc))} → 现 {hbold(_usd_compact(mark_mc))}"
+                    f" · 峰 {hbold(_usd_compact(peak_mc))} · {stage}"
                 )
             else:
                 lines.append(
-                    f"   入场 {_price(open_mark)} → 现 {_price(mark)}  ·  峰 {_price(row['peak_price'])}  ·  {stage}"
+                    f"   入场价 {_price(open_mark)} → 现价 {_price(mark)}"
+                    f" · 峰值 {_price(row['peak_price'])} · {stage}"
                 )
         lines.append("")
     return "\n".join(lines).rstrip()
@@ -298,7 +351,7 @@ def _render_stats_section(chain: str, summary: dict, recent_closed: list) -> lis
     closed = int(summary.get("closed_count") or 0)
     hard_stops = int(summary.get("hard_stop_count") or 0)
     if closed > 0:
-        hs_line = f"硬止损 {hard_stops}/{closed}  ·  {_pct(hard_stops / closed)}"
+        hs_line = f"硬止损 {hbold(f'{hard_stops}/{closed}')} · {_pct(hard_stops / closed)}"
     else:
         hs_line = "硬止损 —（尚无平仓）"
 
@@ -317,21 +370,21 @@ def _render_stats_section(chain: str, summary: dict, recent_closed: list) -> lis
     avg_hold_str = f"{int(avg_hold // 60)}m" if avg_hold is not None else "—"
 
     lines = [
-        f"[{tag}]",
-        f"持仓 {summary.get('open_count', 0)}  ·  名义 {_usd_compact(summary.get('open_notional'))}",
-        f"已平 {closed}  ·  已实现 {_pnl(float(summary.get('closed_pnl') or 0))}",
-        f"本轮开仓 {summary.get('opened_count', 0)}  ·  跳过开仓 {summary.get('skipped_open_count', 0)}",
+        hbold(f"[{tag}]"),
+        f"持仓 {hbold(summary.get('open_count', 0))}  ·  投入 {hbold(_usd_compact(summary.get('open_notional')))}",
+        f"已平 {hbold(closed)}  ·  已实现 {hbold(_pnl(float(summary.get('closed_pnl') or 0)))}",
+        f"本轮开仓 {hbold(summary.get('opened_count', 0))}  ·  跳过开仓 {hbold(summary.get('skipped_open_count', 0))}",
         hs_line,
-        f"胜率 {win_rate_str}  ·  盈 {win_count} / 亏 {loss_count}",
-        f"均盈 {_pnl(avg_win) if avg_win is not None else '—'}  ·  均亏 {_pnl(avg_loss) if avg_loss is not None else '—'}",
-        f"期望值 {expectancy_str}  ·  均持仓 {avg_hold_str}",
+        f"胜率 {hbold(win_rate_str)}  ·  盈 {win_count} / 亏 {loss_count}",
+        f"均盈 {hbold(_pnl(avg_win) if avg_win is not None else '—')}  ·  均亏 {hbold(_pnl(avg_loss) if avg_loss is not None else '—')}",
+        f"期望值 {hbold(expectancy_str)}  ·  均持仓 {hbold(avg_hold_str)}",
     ]
     if recent_closed:
         lines.append("最近平仓")
         for row in recent_closed[:5]:
             sym = row["symbol"] or row["token"][:8]
             reason = CLOSE_REASON_LABELS.get(row["close_reason"] or "", row["close_reason"] or "—")
-            lines.append(f"· ${sym} {reason} {_pnl(float(row['realized_pnl'] or 0))}")
+            lines.append(f"· ${_esc(sym)} {reason} {hbold(_pnl(float(row['realized_pnl'] or 0)))}")
     return lines
 
 
@@ -348,13 +401,11 @@ def render_stats(
     if per_chain is None:
         per_chain = {"sol": (summary or {}, recent_closed or [])}
 
-    lines = ["📊 模拟统计", ""]
+    lines = [hbold("📊 模拟统计"), ""]
     for name, (summ, closed) in per_chain.items():
         lines.extend(_render_stats_section(name, summ, closed))
         lines.append("")
-    lines.append(
-        "注：硬止损计数按 close_reason=hard_stop，含 stage1 已盈利后再硬止损的仓位。"
-    )
+    lines.append("注：硬止损计数含回本减仓后再次硬止损的仓位。")
     lines.append("")
     lines.append("用 /reset_paper <sol|bsc|robinhood|all> confirm 清空模拟（持仓/告警/拦截/冷却）")
     return "\n".join(lines)
@@ -365,7 +416,7 @@ def render_reset_paper_hint() -> str:
         [
             "⚠️ 将清空模拟数据",
             "",
-            "持仓 / 成交 / 快照 / 冷却 / 告警 / 拦截统计都会删除。",
+            "持仓 / 成交 / 冷却 / 告警 / 拦截统计都会删除。",
             "请指定链并确认，例如：",
             "/reset_paper sol confirm",
             "/reset_paper bsc confirm",
@@ -381,9 +432,8 @@ def render_reset_paper(deleted: dict[str, int], *, chain: str = "all") -> str:
     lines = [
         f"🧹 [{tag}] 模拟已重置",
         "",
-        f"仓位行 {deleted.get('paper_positions', 0)}  ·  成交 {deleted.get('paper_fills', 0)}",
-        f"跳过开仓 {deleted.get('paper_skip_opens', 0)}  ·  快照 {deleted.get('snapshots', 0)}",
-        f"冷却 {deleted.get('cooldowns', 0)}  ·  告警 {deleted.get('alerts', 0)}  ·  拦截 {deleted.get('reject_counts', 0)}",
+        f"持仓 {hbold(deleted.get('paper_positions', 0))}  ·  成交 {hbold(deleted.get('paper_fills', 0))}  ·  跳过开仓 {hbold(deleted.get('paper_skip_opens', 0))}",
+        f"冷却 {hbold(deleted.get('cooldowns', 0))}  ·  告警 {hbold(deleted.get('alerts', 0))}  ·  拦截 {hbold(deleted.get('reject_counts', 0))}",
     ]
     if round_id:
         lines.append("")
@@ -402,28 +452,29 @@ def render_rounds(
     """Archived experiment rounds overview; optional per-chain detail of one round."""
     if not rows and detail is None:
         return "📦 归档轮次\n\n暂无历史轮次（/reset_paper 后才会有归档）。"
-    lines = ["📦 归档轮次", ""]
+    lines = [hbold("📦 归档轮次"), ""]
     if detail is None:
         for row in rows:
             pnl = float(row["closed_pnl"] or 0)
-            scope = "全部链" if str(row["reset_chain"]) == "all" else _chain_tag(str(row["reset_chain"]))
             lines.append(
-                f"· round #{row['round_id']} [{scope}] {format_duration(time.time() - float(row['reset_at']))}前  "
-                f"仓位 {row['positions']} (平 {row['closed_count']} / 在持 {row['open_count']})  "
-                f"已实现 {_pnl(pnl)}"
+                f"· round #{row['round_id']}  仓位 {row['positions']} "
+                f"(平 {row['closed_count']} / 在持 {row['open_count']})  "
+                f"已实现 {hbold(_pnl(pnl))}"
             )
         lines.append("")
-        lines.append("用 /rounds <id> 查看某轮详情（例如 /rounds 2）。")
+        lines.append("用 /rounds <id> 查看某轮详情（例如 /rounds 1786123456）。")
     else:
         rid = detail[0]["round_id"] if detail else rows[0]["round_id"]
-        lines.append(f"round #{rid} 详情")
+        lines.append(hbold(f"round #{rid} 详情"))
         for d in detail:
             chain_tag = "全部" if d["chain"] is None else _chain_tag(d["chain"])
             wr = f"{d['win_rate'] * 100:.0f}%" if d["win_rate"] is not None else "—"
+            avg_win = _pnl(float(d["avg_win_usd"] or 0)) if d["avg_win_usd"] is not None else "—"
+            avg_loss = _pnl(float(d["avg_loss_usd"] or 0)) if d["avg_loss_usd"] is not None else "—"
             lines.append(
                 f"· [{chain_tag}] 平 {d['closed_count']} / 在持 {d['open_count']}  "
-                f"已实现 {_pnl(d['closed_pnl'])}  胜率 {wr}  "
-                f"硬止损 {d['hard_stop_count']}  均赢 {_usd_compact(d['avg_win_usd'])}  均亏 {_usd_compact(d['avg_loss_usd'])}"
+                f"已实现 {hbold(_pnl(float(d['closed_pnl'] or 0)))}  胜率 {hbold(wr)}  "
+                f"硬止损 {d['hard_stop_count']}  均盈 {hbold(avg_win)}  均亏 {hbold(avg_loss)}"
             )
         if recent_closed:
             lines.append("")
@@ -431,18 +482,18 @@ def render_rounds(
             for row in recent_closed[:5]:
                 sym = row["symbol"] or row["token"][:8]
                 reason = CLOSE_REASON_LABELS.get(row["close_reason"] or "", row["close_reason"] or "—")
-                lines.append(f"· ${sym} {reason} {_pnl(float(row['realized_pnl'] or 0))}")
+                lines.append(f"· ${_esc(sym)} {reason} {hbold(_pnl(float(row['realized_pnl'] or 0)))}")
     return "\n".join(lines)
 
 
 def render_rejects(rows: list) -> str:
     if not rows:
         return "🚫 拦截 Top\n\n暂无拦截统计。"
-    lines = ["🚫 拦截 Top", ""]
+    lines = [hbold("🚫 拦截 Top"), ""]
     for row in rows:
         src = reject_source_label(str(row["source"]))
         reason = reject_reason_label(str(row["reason"]))
-        lines.append(f"· [{row['chain']}] {src} / {reason} × {row['count']}")
+        lines.append(f"· [{_esc(row['chain'])}] {src} / {reason} × {hbold(row['count'])}")
     return "\n".join(lines)
 
 
@@ -474,14 +525,14 @@ def render_status(
             # Ambiguous legacy multi-chain total — still show mode list, totals only if single.
             pass
 
-    lines = ["🟢 运行中", ""]
+    lines = [hbold("🟢 运行中"), ""]
     if not chain_rows:
         lines.append("链 —")
         return "\n".join(lines)
     for row in chain_rows:
         tag = _chain_tag(str(row["name"]))
         lines.append(
-            f"[{tag}] {row.get('mode', 'paper')}  ·  持仓 {row.get('open_count', 0)}  ·  冷却 {row.get('cooldowns', 0)}"
+            f"{hbold(f'[{tag}]')} {row.get('mode', 'paper')}  ·  持仓 {hbold(row.get('open_count', 0))}  ·  冷却 {hbold(row.get('cooldowns', 0))}"
         )
     return "\n".join(lines)
 
@@ -503,11 +554,11 @@ def render_alerts(
     if not any(per_chain.values()):
         return "📨 最近告警\n\n暂无告警记录。"
 
-    lines = ["📨 最近告警", ""]
+    lines = [hbold("📨 最近告警"), ""]
     for chain, chain_rows in per_chain.items():
         if not chain_rows:
             continue
-        lines.append(f"[{_chain_tag(chain)}]")
+        lines.append(hbold(f"[{_chain_tag(chain)}]"))
         for row in chain_rows:
             sym = "?"
             exec_status = ""
@@ -517,18 +568,18 @@ def render_alerts(
                 sym = payload.get("symbol") or "?"
                 st = payload.get("exec_status")
                 if st == "opened":
-                    exec_status = "  ✅开仓"
+                    exec_status = " ✅开仓"
                 elif st == "skipped_open":
-                    exec_status = "  ⏭跳过"
+                    exec_status = " ⏭跳过"
                 elif st == "blocked_max_positions":
-                    exec_status = "  ⛔满仓"
+                    exec_status = " ⛔满仓"
                 if payload.get("dual_source"):
-                    dual = "  ·双源"
+                    dual = " ·双源"
             except Exception:  # noqa: BLE001
                 pass
             ts = datetime.fromtimestamp(row["created_at"], tz=timezone.utc).strftime("%m-%d %H:%M")
-            lines.append(f"· {ts}  ${sym}{exec_status}{dual}")
-            lines.append(f"  {row['token']}")
+            lines.append(f"· {hbold(f'{ts}  ${_esc(sym)}')}{exec_status}{dual}")
+            lines.append(f"  {hcode(row['token'])}")
         lines.append("")
     return "\n".join(lines).rstrip()
 
@@ -540,13 +591,14 @@ def render_help(
     include_reset: bool = True,
 ) -> str:
     chains = enabled_chains or [n for n, c in app_cfg.chains.items() if c.enabled]
-    cmd_line = "命令：/positions /stats /rejects /alerts /status /rounds /chatid"
+    cmd_line = "命令：/positions /stats /alerts /status /rejects /rounds"
     if include_reset:
         cmd_line += " /reset_paper"
+    cmd_line += " /chatid"
     lines = [
-        "📖 LumiBot",
+        hbold("📖 LumiBot"),
         "",
-        "推送：过门后信号推送 + 模拟开仓",
+        "推送：筛选通过后信号推送 + 模拟开仓",
         cmd_line,
     ]
     for name in chains:
@@ -554,17 +606,18 @@ def render_help(
         if cfg is None:
             continue
         s = cfg.strategy
-        slip = f"买 {_pct(cfg.execution.slippage_buy_pct)} / 卖 {_pct(cfg.execution.slippage_sell_pct)}"
+        slip = f"买入 {_pct(cfg.execution.slippage_buy_pct)} / 卖出 {_pct(cfg.execution.slippage_sell_pct)}"
+        sell_desc = f"比例 {_pct(s.stage1_sell_ratio)}" if s.stage1_sell_mode == "ratio" else "回收本金"
         lines.extend(
             [
                 "",
-                f"[{_chain_tag(name)}] 规则",
-                f"· 名义 {_usd_compact(s.notional_usd)}，滑点 {slip}",
+                hbold(f"[{_chain_tag(name)}] 规则"),
+                f"· 单仓投入 {_usd_compact(s.notional_usd)}，滑点 {slip}",
                 f"· 硬止损：相对开仓标记 {_pct(s.hard_stop_pct)}",
                 (
-                    f"· 回本触发 {_pct(s.stage1_tp_pct)} 相对买入成本（含买滑点）；"
-                    f"减仓 {'比例 ' + _pct(s.stage1_sell_ratio) if s.stage1_sell_mode == 'ratio' else '回本名义'}；"
-                    f"剩余峰值回撤 {_pct(s.trail_drawdown_pct)} 平仓；"
+                    f"· 盈利 {_pct(s.stage1_tp_pct)} 触发回本减仓（相对买入成本，含买滑点）；"
+                    f"减仓 {sell_desc}；"
+                    f"剩余仓位峰值回撤 {_pct(s.trail_drawdown_pct)} 平仓；"
                     f"超时 {format_duration(s.timeout_hours * 3600)}"
                 ),
                 (
@@ -576,8 +629,8 @@ def render_help(
     lines.extend(
         [
             "",
-            "· 开仓/推送指标 = 过门后重拉的实时 token 快照（筛选用当时快照，不二次门控）",
-            "· ⏱ 延迟 = 本机见到该条 → 发出前的处理耗时（含过门重拉；不含轮询等待）",
+            "· 开仓/推送指标 = 筛选通过后重拉的实时 token 快照（开仓用当时快照，不二次筛选）",
+            "· ⏱ 延迟 = 本机见到该条 → 发出前的处理耗时（含筛选重拉；不含轮询等待）",
             "· /stats /status /positions /alerts 按链分节展示，不混算合计",
         ]
     )
@@ -594,43 +647,40 @@ def render_unknown_command() -> str:
     return "📖 未知指令\n\n发送 /help 查看可用命令。"
 
 
-def _mc_line(cand: TokenCandidate) -> str:
-    if (
-        cand.source == Source.SIGNAL
-        and cand.trigger_mc is not None
-        and cand.trigger_mc > 0
-        and cand.market_cap is not None
-    ):
-        chg = (cand.market_cap / cand.trigger_mc) - 1.0
-        return (
-            f"💰 市值 {_usd_compact(cand.market_cap)} → 触发 {_usd_compact(cand.trigger_mc)}"
-            f"  ({_pct(chg)})"
-        )
-    return f"💰 市值 {_usd_compact(cand.market_cap)}"
-
-
 def _safety_line(cand: TokenCandidate) -> str:
     safety = cand.safety
-    if safety is None:
-        return "🛡 安全 通过"
     parts: list[str] = ["🛡 安全 通过"]
-    for w in safety.warnings:
-        parts.append(f"⚠ {WARN_LABELS.get(w, w)}")
-    if safety.wash_trading is True:
-        parts.append("⚠ 洗盘")
-    risk_bits: list[str] = []
-    if safety.rug_ratio is not None and safety.rug_ratio > 0:
-        risk_bits.append(f"Rug {_pct(safety.rug_ratio)}")
-    if safety.bundler_rate is not None and safety.bundler_rate > 0:
-        risk_bits.append(f"Bundler {_pct(safety.bundler_rate)}")
-    if safety.rat_rate is not None and safety.rat_rate > 0:
-        risk_bits.append(f"老鼠仓 {_pct(safety.rat_rate)}")
-    if risk_bits:
-        parts.append(" · ".join(risk_bits))
-    return "  ·  ".join(parts)
+    if safety is not None:
+        tax_bits: list[str] = []
+        if safety.buy_tax is not None and safety.buy_tax > 0:
+            tax_bits.append(f"买税 {_pct(safety.buy_tax)}")
+        if safety.sell_tax is not None and safety.sell_tax > 0:
+            tax_bits.append(f"卖税 {_pct(safety.sell_tax)}")
+        if tax_bits:
+            parts.append(" · ".join(tax_bits))
+        for w in safety.warnings:
+            parts.append(f"⚠ {WARN_LABELS.get(w, w)}")
+        if safety.wash_trading is True:
+            parts.append("⚠ 洗盘")
+        risk_bits: list[str] = []
+        if safety.rug_ratio is not None and safety.rug_ratio > 0:
+            risk_bits.append(f"Rug {_pct(safety.rug_ratio)}")
+        if safety.bundler_rate is not None and safety.bundler_rate > 0:
+            risk_bits.append(f"Bundler {_pct(safety.bundler_rate)}")
+        if safety.rat_rate is not None and safety.rat_rate > 0:
+            risk_bits.append(f"老鼠仓 {_pct(safety.rat_rate)}")
+        if risk_bits:
+            parts.append(" · ".join(risk_bits))
+    return " · ".join(parts)
 
 
-def _paper_line(paper: ExecResult | None, *, paper_status: str | None = None) -> str:
+def _status_line(paper: ExecResult | None, *, paper_status: str | None, latency_sec: float | None) -> str:
+    marker = _paper_marker(paper, paper_status=paper_status)
+    latency = f" · ⏱ 延迟 {format_latency(latency_sec)}"
+    return f"{hbold(marker)}{latency}"
+
+
+def _paper_marker(paper: ExecResult | None, *, paper_status: str | None = None) -> str:
     if paper_status == "opening":
         return "⏳ 开仓中"
     if paper_status == "precheck_skipped_open":
@@ -713,6 +763,7 @@ class TelegramNotifier:
         *,
         reply_markup: InlineKeyboardMarkup | None = None,
         disable_preview: bool = True,
+        parse_mode: str | None = "HTML",
     ) -> tuple[bool, bool, list[tuple[int, int]]]:
         if not self.chat_ids:
             return False, False, []
@@ -725,7 +776,7 @@ class TelegramNotifier:
                     chat_id,
                     text,
                     disable_web_page_preview=disable_preview,
-                    parse_mode=None,
+                    parse_mode=parse_mode,
                     reply_markup=reply_markup,
                 )
                 message_ids.append((chat_id, msg.message_id))
@@ -742,6 +793,7 @@ class TelegramNotifier:
         *,
         reply_markup: InlineKeyboardMarkup | None = None,
         disable_preview: bool = True,
+        parse_mode: str | None = "HTML",
     ) -> tuple[bool, bool]:
         if not message_ids:
             return False, False
@@ -754,7 +806,7 @@ class TelegramNotifier:
                     message_id=message_id,
                     text=text,
                     disable_web_page_preview=disable_preview,
-                    parse_mode=None,
+                    parse_mode=parse_mode,
                     reply_markup=reply_markup,
                 )
                 ok += 1
