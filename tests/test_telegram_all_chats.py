@@ -116,3 +116,48 @@ async def test_edit_failure_leaves_original_and_other_chats_edit(monkeypatch):
     assert calls == [1, 2]
     assert bodies == ["frozen body", "frozen body"]
     await n.close()
+
+
+@pytest.mark.asyncio
+async def test_paper_events_skip_group_chats(monkeypatch):
+    """Trade events (stage1/closes) must only reach control chats, not groups."""
+    n = TelegramNotifier("000:fake", [1, -100], event_chat_ids=[1])
+    calls: list[int] = []
+
+    async def fake_send(chat_id, text, disable_web_page_preview=False, parse_mode=None, **kwargs):
+        calls.append(chat_id)
+        return type("X", (), {"message_id": chat_id})
+
+    monkeypatch.setattr(n._bot, "send_message", fake_send)
+    from lumibot.exec_types import PaperTradeEvent
+
+    ev = PaperTradeEvent(
+        kind="close",
+        chain="sol",
+        token="T",
+        symbol="X",
+        reason="hard_stop",
+        mark=0.7,
+        fill_price=0.66,
+        qty=20.0,
+        pnl=-6.0,
+        notional_usd=20.0,
+        entry_price=1.05,
+        open_mark=1.0,
+        hold_sec=60,
+    )
+    ok, all_ok = await n.send_paper_event(ev)
+    assert (ok, all_ok) == (True, True)
+    # Group chat id -100 must NOT receive the trade event.
+    assert calls == [1]
+    await n.close()
+
+
+def test_gmgn_keyboard_uniform_across_chains():
+    """All chains must render the same button set (GMGN + DexScreemer)."""
+    from lumibot.telegram_notify import gmgn_keyboard
+
+    for chain in ("sol", "bsc", "robinhood"):
+        kb = gmgn_keyboard(chain, "0xABC")
+        texts = [b.text for row in kb.inline_keyboard for b in row]
+        assert texts == ["打开 GMGN", "DexScreener"], (chain, texts)

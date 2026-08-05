@@ -580,9 +580,10 @@ def test_dexscreener_chain_aware():
     assert [b.text for b in kb.inline_keyboard[0]] == ["打开 GMGN", "DexScreener"]
     kb = gmgn_keyboard("bsc", "Addr")
     assert [b.text for b in kb.inline_keyboard[0]] == ["打开 GMGN", "DexScreener"]
+    # Uniform template: every chain gets the same two buttons.
     kb = gmgn_keyboard("robinhood", "Addr")
-    assert [b.text for b in kb.inline_keyboard[0]] == ["打开 GMGN"]
-    assert dexscreener_link("robinhood", "Addr") is None
+    assert [b.text for b in kb.inline_keyboard[0]] == ["打开 GMGN", "DexScreener"]
+    assert dexscreener_link("robinhood", "Addr") == "https://dexscreener.com/robinhood/Addr"
     assert dexscreener_link("sol", "Addr") == "https://dexscreener.com/solana/Addr"
 
 

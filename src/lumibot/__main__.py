@@ -70,7 +70,12 @@ async def run() -> None:
         else:
             logger.warning("global.news enabled but OPENNEWS_TOKEN is missing; news enrichment disabled")
 
-    notifier = TelegramNotifier(settings.telegram_bot_token, push_chat_ids)
+    notifier = TelegramNotifier(
+        settings.telegram_bot_token,
+        push_chat_ids,
+        # Trade events (stage1/closes) only reach control chats, not groups.
+        event_chat_ids=chat_ids,
+    )
     logger.info(
         "telegram destinations control=%s push=%s (groups=%s)",
         len(chat_ids),

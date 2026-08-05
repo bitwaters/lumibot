@@ -27,6 +27,7 @@ GMGN_URL = {
 DEXSCREENER_URL = {
     "sol": "https://dexscreener.com/solana/{addr}",
     "bsc": "https://dexscreener.com/bsc/{addr}",
+    "robinhood": "https://dexscreener.com/robinhood/{addr}",
 }
 
 WARN_LABELS = {
@@ -788,8 +789,16 @@ def _pnl(v: float) -> str:
 
 
 class TelegramNotifier:
-    def __init__(self, token: str, chat_ids: list[int]) -> None:
+    def __init__(
+        self,
+        token: str,
+        chat_ids: list[int],
+        event_chat_ids: list[int] | None = None,
+    ) -> None:
         self.chat_ids = chat_ids
+        # Paper-trade event messages (stage1 / closes) go to control chats only;
+        # groups receive signal cards but no trade events (D: signal-only).
+        self.event_chat_ids = event_chat_ids if event_chat_ids is not None else chat_ids
         self._bot = Bot(token=token)
 
     @property
@@ -803,16 +812,18 @@ class TelegramNotifier:
         self,
         text: str,
         *,
+        chat_ids: list[int] | None = None,
         reply_markup: InlineKeyboardMarkup | None = None,
         disable_preview: bool = True,
         parse_mode: str | None = "HTML",
     ) -> tuple[bool, bool, list[tuple[int, int]]]:
-        if not self.chat_ids:
+        targets = chat_ids if chat_ids is not None else self.chat_ids
+        if not targets:
             return False, False, []
         ok = 0
         fail = 0
         message_ids: list[tuple[int, int]] = []
-        for chat_id in self.chat_ids:
+        for chat_id in targets:
             try:
                 msg = await self._bot.send_message(
                     chat_id,
@@ -915,6 +926,7 @@ class TelegramNotifier:
     async def send_paper_event(self, ev: PaperTradeEvent) -> tuple[bool, bool]:
         ok, all_ok, _ = await self.send_text(
             render_paper_event(ev),
+            chat_ids=self.event_chat_ids,
             reply_markup=gmgn_keyboard(ev.chain, ev.token),
             disable_preview=True,
         )
