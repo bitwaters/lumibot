@@ -203,7 +203,7 @@ async def _enrich_query_narrative(
     """Append the 📚 narrative block to a fresh query reply; fail-open."""
     try:
         line = await narrative.narrative_for(cand, info)
-        block = render_narrative_block(info, line)
+        block = render_narrative_block(line)
         if not block:
             return
         await sent.bot.edit_message_text(

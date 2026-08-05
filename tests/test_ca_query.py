@@ -428,13 +428,12 @@ def test_query_card_shows_volume_and_mc():
 def test_narrative_block_single_sentence_line():
     from lumibot.telegram_notify import render_narrative_block
 
-    info = {"price": {"price": "1.0", "price_24h": "0.5", "buys_24h": 1200, "sells_24h": 800}}
-    block = render_narrative_block(info, "特朗普概念官方迷因币，X 讨论度上升")
+    block = render_narrative_block("特朗普概念官方迷因币，X 讨论度上升")
     assert block == "📚 特朗普概念官方迷因币，X 讨论度上升"
     assert "24h" not in block
     assert "🛒" not in block
-    assert render_narrative_block(info, None) == ""
-    assert render_narrative_block(None, "仅叙事") == "📚 仅叙事"
+    assert render_narrative_block(None) == ""
+    assert render_narrative_block("") == ""
 
 
 @pytest.mark.asyncio

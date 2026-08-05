@@ -259,9 +259,7 @@ def append_narrative_line(card: str, narrative_line: str | None) -> str:
     return "\n".join(lines)
 
 
-def render_narrative_block(
-    info: dict | None, narrative_line: str | None
-) -> str:
+def render_narrative_block(narrative_line: str | None) -> str:
     """Narrative block: single 📚 LLM sentence line (bottom of card)."""
     if not narrative_line:
         return ""
@@ -962,7 +960,7 @@ class TelegramNotifier:
         narrative_line: str,
         info: dict | None = None,
     ) -> tuple[bool, bool]:
-        block = render_narrative_block(info, narrative_line)
+        block = render_narrative_block(narrative_line)
         return await self.edit_text(
             append_narrative_line(
                 render_card(
