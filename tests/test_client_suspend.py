@@ -45,3 +45,14 @@ async def test_429_without_reset_uses_default_suspension(monkeypatch):
         await client._request("GET", "/v1/market/rank")
     assert client._suspended_until > time.time() + 4
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_min_interval_throttle(monkeypatch):
+    client = GmgnClient("k", RateLimiter(10, 10), cache_ttl_sec=300, min_interval_sec=0.2)
+    monkeypatch.setattr(client, "_sync_request", lambda *a, **k: (200, {}, b'{"ok": true}'))
+    t0 = time.time()
+    await client._request("GET", "/v1/market/rank")
+    await client._request("GET", "/v1/market/rank")
+    assert time.time() - t0 >= 0.19
+    await client.aclose()

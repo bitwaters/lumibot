@@ -57,6 +57,7 @@ async def run() -> None:
         limiter,
         cache_ttl_sec=app_cfg.global_.enrichment_cache_ttl_sec,
         security_cache_ttl_sec=app_cfg.global_.security_cache_ttl_sec,
+        min_interval_sec=app_cfg.global_.rate_limit.min_interval_sec,
     )
     news_poller: NewsPoller | None = None
     news_cfg = app_cfg.global_.news

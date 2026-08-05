@@ -103,6 +103,7 @@ class GmgnClient:
         rate_limiter: RateLimiter,
         cache_ttl_sec: int = 300,
         security_cache_ttl_sec: int | None = None,
+        min_interval_sec: float = 1.0,
     ) -> None:
         self.api_key = api_key
         self.limiter = rate_limiter
@@ -115,6 +116,13 @@ class GmgnClient:
         # When GMGN bans the IP (429 + RATE_LIMIT_BANNED), fail fast without any
         # HTTP call until reset_at. Polling loops then stop re-triggering the ban.
         self._suspended_until: float = 0.0
+        # GMGN OpenAPI default rate limit is 1 request/second; the token-bucket
+        # limiter allows short bursts that still trip server-side 429s. This
+        # global minimum interval serializes every request to the documented
+        # default (configurable via global.rate_limit.min_interval_sec).
+        self.min_interval_sec = min_interval_sec
+        self._last_request_at = 0.0
+        self._throttle_lock = asyncio.Lock()
 
     async def aclose(self) -> None:
         return None
@@ -165,6 +173,12 @@ class GmgnClient:
                 f"GMGN IP banned until {self._suspended_until:.0f}; "
                 f"requests fail fast for {self._suspended_until - now:.0f}s"
             )
+        async with self._throttle_lock:
+            now = time.time()
+            wait = self.min_interval_sec - (now - self._last_request_at)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_request_at = time.time()
         q = self._auth_query(query)
         url = f"{HOST}{path}?{urlencode(q, doseq=True)}"
         headers = {

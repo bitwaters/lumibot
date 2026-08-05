@@ -66,6 +66,10 @@ class FiltersCfg(BaseModel):
     age_max_sec: int = 0    # reject tokens older than this; 0 = disabled
     max_mc_extension: float = 2.0
     enforce_mc_extension: bool = False
+    # Signal-only chase gate: skip when the fresh quote price has run more than
+    # chase_max_pct above the push payload price (signal arrived too late, market
+    # already pumped). 0 = disabled.
+    chase_max_pct: float = 0.0
 
 
 class SafetyThresholds(BaseModel):
@@ -109,6 +113,10 @@ class StrategyCfg(BaseModel):
     snapshots_sec: list[int] = Field(default_factory=lambda: [60, 300, 900, 3600])
     loss_cooldown_min: int = 180
     post_close_cooldown_min: int = 45
+    # Block re-opening ANY token sharing the same symbol for this many minutes
+    # after a position closes (same-name duplicate pumps; address-keyed cooldowns
+    # can't catch them). 0 = disabled.
+    symbol_cooldown_min: int = 0
     # Pre-stage1 trail: protects unrealized profit if price pumps then dumps
     # before ever reaching stage1_tp_pct.
     pre_stage1_trail_enable: bool = False
@@ -148,6 +156,9 @@ class ChainCfg(BaseModel):
 class RateLimitCfg(BaseModel):
     capacity: float = 20
     refill_per_sec: float = 6
+    # Minimum wall-clock seconds between GMGN requests (server default limit is
+    # 1 req/s; bursts above this trip 429s/IP bans). 0 disables.
+    min_interval_sec: float = 1.0
 
 
 class NewsCfg(BaseModel):

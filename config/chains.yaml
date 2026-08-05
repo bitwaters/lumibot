@@ -3,6 +3,7 @@ global:
   rate_limit:
     capacity: 20
     refill_per_sec: 6
+    min_interval_sec: 1.0  # GMGN default limit: 1 req/s; 0 = disable
   enrichment_cache_ttl_sec: 300
   security_cache_ttl_sec: 3600
   price_source: token_info  # token_info | kline
