@@ -34,6 +34,21 @@ def deautolink(text: str) -> str:
     return _DEAUTOLINK_RE.sub(lambda m: m.group(0).replace(".", ".\u200b", 1), text)
 
 
+_TRUNCATE_BOUNDS = "。；，、,.!?！？;"
+
+
+def truncate_sentence(text: str, limit: int) -> str:
+    """Cut at the last punctuation boundary within limit; append … when cut."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    idx = max(cut.rfind(c) for c in _TRUNCATE_BOUNDS)
+    if idx > limit * 0.5:
+        cut = cut[: idx + 1]
+    return cut.rstrip() + "…"
+
+
 def _safe_url(value: object) -> str | None:
     """http(s) URL free of HTML-attribute breaking characters."""
     if value is None:
@@ -237,7 +252,7 @@ class NarrativeService:
         narrative = self._extract(data)
         if narrative is None:
             return None
-        return narrative[:NARRATIVE_MAX_LEN]
+        return truncate_sentence(narrative, NARRATIVE_MAX_LEN)
 
     @staticmethod
     def _extract(data: Any) -> str | None:

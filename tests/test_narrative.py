@@ -135,3 +135,16 @@ def test_narrative_block_deautolinks_sentence_but_not_links():
     line1 = block.splitlines()[0]
     assert "trump.\u200bfun" in line1
     assert '<a href="https://x.com/RealTrump">X</a>' in block  # link line untouched
+
+
+def test_truncate_sentence_boundary():
+    from lumibot.narrative import truncate_sentence
+
+    text = "RNA 是 Pump.fun 上发行的 meme 币，主题结合算法概念，社区热度一般，创建者开盘 176 次，风险占比高。"
+    out = truncate_sentence(text, 40)
+    assert len(out) <= 41 and out.endswith("…")
+    assert out.rstrip("…").endswith(("，", "。", "；"))
+    # short text unchanged
+    assert truncate_sentence("短句", 100) == "短句"
+    # no boundary -> hard cut with ellipsis
+    assert truncate_sentence("很" * 50, 10) == "很" * 10 + "…"
