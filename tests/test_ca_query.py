@@ -181,7 +181,7 @@ def test_query_card_layout():
     assert "<code>💰 市值    ≈ $27.7K</code>" in text
     assert "🔥 热度" in text
     assert "🦈 聪明钱" in text and "🎩 KOL" in text
-    assert "税 0.0%/1.0%" in text
+    assert "税 买 0.0% / 卖 1.0%" in text
     assert "已开仓" not in text
     assert "⏱ 延迟" not in text
 
@@ -375,8 +375,7 @@ async def test_handle_ca_message_narrative_async_edit():
     assert "<code>" in edited_text and "<b>" in edited_text
     assert "📚 马斯克概念 meme，社区热度高" in edited_text
     assert "24h" not in edited_text
-    assert "🛒 买" in edited_text and "1,200" in edited_text
-    assert "💸 卖" in edited_text
+    assert "🛒 买卖" in edited_text and "1,200 / 800" in edited_text
 
 
 @pytest.mark.asyncio

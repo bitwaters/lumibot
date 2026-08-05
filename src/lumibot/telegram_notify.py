@@ -739,8 +739,7 @@ def render_query_card(cand: TokenCandidate) -> str:
         metrics.append(("🦈 聪明钱", _num(cand.smart_wallets)))
         metrics.append(("🎩 KOL", _num(cand.kol_wallets)))
     if cand.buys_24h is not None or cand.sells_24h is not None:
-        metrics.append(("🛒 买", _num(cand.buys_24h)))
-        metrics.append(("💸 卖", _num(cand.sells_24h)))
+        metrics.append(("🛒 买卖", f"{_num(cand.buys_24h)} / {_num(cand.sells_24h)}"))
     if cand.platform:
         metrics.append(("🏭 平台", cand.platform))
     rows: list[list[tuple[str, str]]] = [metrics[:1], metrics[1:2]]
@@ -760,10 +759,7 @@ def _safety_line(cand: TokenCandidate) -> str:
     if safety is not None:
         buy_tax = safety.buy_tax if safety.buy_tax is not None else 0.0
         sell_tax = safety.sell_tax if safety.sell_tax is not None else 0.0
-        if buy_tax == sell_tax:
-            parts.append(f"税 {_pct(buy_tax)}")
-        else:
-            parts.append(f"税 {_pct(buy_tax)}/{_pct(sell_tax)}")
+        parts.append(f"税 买 {_pct(buy_tax)} / 卖 {_pct(sell_tax)}")
         for w in safety.warnings:
             parts.append(f"⚠ {WARN_LABELS.get(w, w)}")
         if safety.wash_trading is True:
