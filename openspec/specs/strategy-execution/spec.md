@@ -2,7 +2,6 @@
 
 ## Purpose
 Paper/Live 共用 `StrategyOrder` 状态机与执行抽象。出场比例、名义、超时、滑点等以 `config/chains.yaml` 为准（见 [docs/runtime-params.md](../../docs/runtime-params.md)）。硬止损基准见 `open-mark-hard-stop`（相对 `open_mark`，不是归档文案里的「相对入场价 -20%」）。
-
 ## Requirements
 ### Requirement: 共用 StrategyOrder 模型
 Paper 与 Live 路径 MUST 共用同一 `StrategyOrder` 模型，包含链、代币、`open_mark`、买入成交价、名义美元仓位、买/卖滑点、硬止损比例、第一段止盈比例、相对入场后峰值的回撤比例、超时时间。上述比例与名义 MUST 从配置加载。买入按买滑点成交；第一段/硬止损/峰值回撤/超时等所有卖出 MUST 按卖滑点记账成交。第一段完成后剩余仓位成本上移仅用于记账与展示；硬止损仍相对 `open_mark`；剩余仓主要靠峰值回撤与超时出场。
@@ -90,4 +89,18 @@ The database/executor layer MUST provide an abort path that removes or voids a n
 #### Scenario: Abort removes open position
 - **WHEN** abort_paper_open is invoked for a just-opened position id
 - **THEN** that position is no longer status open and is not counted as a normal hard_stop/trail close
+
+### Requirement: Executor binds chain-local strategy
+Each chain's Paper (and future Live) executor MUST be constructed with `chains.<that_chain>.strategy` and MUST use those values for notional, hard stop, stage1, trail, timeout, snapshots, and re-entry cooldown durations.
+
+#### Scenario: BSC timeout independent of SOL
+- **WHEN** `chains.bsc.strategy.timeout_hours` is 3 and `chains.sol.strategy.timeout_hours` is 2
+- **THEN** a bsc open position times out using 3h and a sol position using 2h
+
+### Requirement: Close cooldowns use chain strategy durations
+On normal close, `loss_cooldown_min` / `post_close_cooldown_min` MUST come from the closing position's chain strategy config.
+
+#### Scenario: Hard stop arms loss using chain value
+- **WHEN** a bsc position hard-stops and `chains.bsc.strategy.loss_cooldown_min` is 180
+- **THEN** the loss cooldown until_ts reflects approximately 180 minutes for that bsc token
 

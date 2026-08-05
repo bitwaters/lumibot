@@ -2,7 +2,6 @@
 
 ## Purpose
 统一的轻量指标 / visiting / 安全筛选与冷却占用。数值阈值以 `config/chains.yaml` 为准（见 [docs/runtime-params.md](../../docs/runtime-params.md)）；归档提案中的历史数字不作现行要求。
-
 ## Requirements
 ### Requirement: 轻量指标筛选
 告警前，候选 MUST 通过该链配置的市值区间、最低流动性、最高 top10 持仓占比、最低持有人数。平台过滤可选；空平台列表表示不限制平台。
@@ -91,4 +90,22 @@ Signal types configured for the chain and trending MUST use the same light filte
 #### Scenario: Trending pass opens paper
 - **WHEN** a trending candidate passes the unified admission gate and no open position exists
 - **THEN** Paper open is attempted and a Telegram alert is sent
+
+### Requirement: Enabled EVM chains use evm_v1 independently
+When `bsc` or `robinhood` is enabled, candidates on that chain MUST be evaluated with `evm_v1` and that chain's own `filters` / `safety` thresholds. Admission MUST fail closed on missing EVM-required security fields (honeypot / renounced / open_source) after enrichment.
+
+#### Scenario: BSC candidate uses BSC filters
+- **WHEN** an enabled BSC candidate is lightly filtered
+- **THEN** thresholds come from `chains.bsc.filters`, not from `chains.sol.filters`
+
+#### Scenario: Missing renounced rejects on EVM
+- **WHEN** a BSC or Robinhood security payload has `renounced` missing after fetch
+- **THEN** the candidate MUST be rejected with an EVM safety reason and MUST NOT be pushed or opened
+
+### Requirement: Per-chain reject observability
+Reject counters MUST remain keyed by `chain` so operators can tune each chain from `/rejects` without conflating distributions.
+
+#### Scenario: BSC rejects do not overwrite SOL rows
+- **WHEN** BSC rejects for reason `mc` and SOL also rejects for `mc`
+- **THEN** `reject_counts` stores separate rows distinguished by chain
 
