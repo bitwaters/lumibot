@@ -241,13 +241,25 @@ class NarrativeService:
         stat = info.get("stat") if isinstance(info.get("stat"), dict) else {}
         wts = info.get("wallet_tags_stat") if isinstance(info.get("wallet_tags_stat"), dict) else {}
         platform = str(info.get("launchpad_platform") or info.get("launchpad") or "").strip()[:30]
-        user = (
-            f"symbol={cand.symbol} name={name} desc={desc} website={website}"
-            f" platform={platform} creator_open_count={stat.get('creator_created_count')}"
-            f" rat_ratio={stat.get('top_rat_trader_percentage')}"
-            f" bundler_ratio={stat.get('top_bundler_trader_percentage')}"
-            f" smart_wallets={wts.get('smart_wallets')}"
-        )
+        # Missing dimensions are omitted from the prompt (never injected as None).
+        parts = [f"symbol={cand.symbol}"]
+        if name:
+            parts.append(f"name={name}")
+        if desc:
+            parts.append(f"desc={desc}")
+        if website:
+            parts.append(f"website={website}")
+        if platform:
+            parts.append(f"platform={platform}")
+        for key, val in (
+            ("creator_open_count", stat.get("creator_created_count")),
+            ("rat_ratio", stat.get("top_rat_trader_percentage")),
+            ("bundler_ratio", stat.get("top_bundler_trader_percentage")),
+            ("smart_wallets", wts.get("smart_wallets")),
+        ):
+            if val is not None:
+                parts.append(f"{key}={val}")
+        user = " ".join(parts)
         data = await self.client.complete(system=SYSTEM_PROMPT, user=user)
         narrative = self._extract(data)
         if narrative is None:

@@ -59,6 +59,38 @@ async def test_narrative_normal_flow_and_cache():
 
 
 @pytest.mark.asyncio
+async def test_missing_dimensions_omitted_from_prompt():
+    client = FakeNarrativeClient('{"narrative": "概念"}')
+    svc = NarrativeService("sk-test", _cfg())
+    svc.client = client  # type: ignore[assignment]
+    await svc.narrative_for(_cand(), {})
+    prompt = client.calls[0][1]
+    # Missing stat/wallet/name fields must not be injected as "None".
+    assert "None" not in prompt
+    assert "creator_open_count" not in prompt
+    assert "smart_wallets" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_present_dimensions_injected():
+    client = FakeNarrativeClient('{"narrative": "AI 概念"}')
+    svc = NarrativeService("sk-test", _cfg())
+    svc.client = client  # type: ignore[assignment]
+    info = {
+        "launchpad_platform": "pump.fun",
+        "stat": {"creator_created_count": 12, "top_rat_trader_percentage": 0.3},
+        "wallet_tags_stat": {"smart_wallets": 5},
+    }
+    await svc.narrative_for(_cand(symbol="AGENT", name="AGENT X", address="a9"), info)
+    prompt = client.calls[0][1]
+    assert "platform=pump.fun" in prompt
+    assert "creator_open_count=12" in prompt
+    assert "rat_ratio=0.3" in prompt
+    assert "smart_wallets=5" in prompt
+    assert "name=AGENT X" in prompt
+
+
+@pytest.mark.asyncio
 async def test_narrative_na_not_cached_and_none():
     client = FakeNarrativeClient('{"narrative": "N/A"}')
     svc = NarrativeService("sk-test", _cfg())
@@ -127,7 +159,6 @@ def test_deautolink_breaks_domain_tokens():
 
 
 def test_narrative_block_deautolinks_sentence_but_not_links():
-    from lumibot.narrative import extract_social_links
     from lumibot.telegram_notify import render_narrative_block
 
     info = {"link": {"twitter_username": "RealTrump", "website": "https://trump.fun"}}
