@@ -113,7 +113,7 @@ async def _query_token(
     """Probe candidate chains and assemble a candidate with info + advisory safety."""
     for chain in _chain_candidates(addr, app_cfg):
         try:
-            info = await client.get_token_info(chain, addr, use_cache=False)
+            info = await client.get_token_info(chain, addr)
         except Exception as exc:  # noqa: BLE001
             if "404" in str(exc):
                 continue  # wrong chain — try next
@@ -135,7 +135,7 @@ async def _query_token(
             cand.sells_24h = _as_float(px.get("sells_24h"))
         chain_cfg = app_cfg.chains.get(chain)
         try:
-            sec = await client.get_token_security(chain, addr, use_cache=False)
+            sec = await client.get_token_security(chain, addr)
             if chain_cfg is not None:
                 cand.safety = evaluate_safety(
                     chain_cfg.safety_profile,

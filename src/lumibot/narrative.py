@@ -106,6 +106,12 @@ class NarrativeService:
     async def narrative_for(self, cand: TokenCandidate, info: dict[str, Any]) -> str | None:
         """Return a narrative sentence (<=30 chars) or None when unavailable."""
         if not self._eligible(cand):
+            logger.info(
+                "narrative_skipped chain=%s token=%s symbol=%r (ineligible)",
+                cand.chain,
+                cand.address,
+                cand.symbol,
+            )
             return None
         cached = self.cache.get(cand.chain, cand.address)
         if cached is not None:
@@ -121,6 +127,12 @@ class NarrativeService:
             )
             return None
         if text is None:
+            logger.info(
+                "narrative_na chain=%s token=%s symbol=%r (LLM N/A)",
+                cand.chain,
+                cand.address,
+                cand.symbol,
+            )
             return None
         self.cache.set(cand.chain, cand.address, text)
         return text

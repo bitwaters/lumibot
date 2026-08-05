@@ -438,8 +438,10 @@ def test_narrative_block_single_sentence_line():
 
 
 @pytest.mark.asyncio
-async def test_query_uses_fresh_data_no_cache():
+async def test_query_served_from_cache_first():
     client = FakeClient()
     client.infos[("bsc", EVM)] = _info()
     _, _, _ = await _query_token(client, EVM, _app())
-    assert client.cache_flags == [False, False], client.cache_flags
+    # Cache-first: queries use the shared token-info/security caches (millisecond
+    # replies for hot tokens); fresh fetch only happens on cache miss.
+    assert client.cache_flags == [True, True], client.cache_flags

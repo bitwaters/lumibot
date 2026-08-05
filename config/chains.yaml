@@ -20,7 +20,7 @@ global:
     base_url: https://api.deepseek.com
     model: deepseek-chat
     timeout_sec: 10
-    min_symbol_len: 3
+    min_symbol_len: 1  # any symbol eligible (short meme symbols common)
     symbol_blocklist: []
     cache_ttl_sec: 3600
 

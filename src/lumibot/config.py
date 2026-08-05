@@ -183,7 +183,7 @@ class NarrativeCfg(BaseModel):
     # LLM request timeout (single-layer; covers the whole chat/completions call).
     timeout_sec: float = 10.0
     # Symbols shorter than this skip narrative inference.
-    min_symbol_len: int = 3
+    min_symbol_len: int = 1
     symbol_blocklist: list[str] = Field(default_factory=list)
     # Per-token narrative cache TTL; each token triggers at most one LLM call.
     cache_ttl_sec: int = 3600

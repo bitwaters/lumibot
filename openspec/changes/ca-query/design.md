@@ -39,7 +39,8 @@ bot 当前对一切非命令文本回复「未知指令」（`telegram_bot.py` f
 3. **卡片组装复用现有路径**
    - 候选构造 `TokenCandidate(chain, address, source=Source.TRENDING)`（source 仅作必填字段，查询卡渲染不读）；`merge_info_fields(cand, info, force_visiting=True)` 填充；`evaluate_safety(chain_cfg.safety_profile, normalize_security(sec), chain_cfg.safety)` 得安全行。
    - `render_query_card(cand)`: 标题 `🔍 {hbold('$'+sym)} · {chain_tag}`；`📍 CA:` code；`📊 指标` 网格 = 价格行（💰 价格，独占）+ 市值行（`💰 市值 ≈ X`——GMGN 所有链 token_info 均不返回 market_cap（实测 sol/bsc/rh 全 null），按官方 skill 同款 `price×circulating_supply` 计算并以 `≈` 标注派生值）+ 开盘/流动性 + 持有人/Top10 + 热度/1H 成交（`volume_1h` 从嵌套 `price` 对象提取，顶层为 null）+ 聪明钱/KOL（`wallet_tags_stat`，spike 验证两链返回）+ 平台；`_safety_line` 原样复用；无状态行。
-   - **实时性**：查询路径 `get_token_info(use_cache=False)` + `get_token_security(use_cache=False)`——查询卡拒绝陈旧缓存（官方 skill「no snapshot cache」原则）；`get_token_security` 新增 `use_cache` 参数（默认 True 不影响信号管道）。
+   - **缓存优先（毫秒级）**：用户要求毫秒级回复——查询路径回归共享缓存（`get_token_info` 300s / `get_token_security` 3600s）。信号管道持续填充缓存 → 热 token 查询毫秒命中（含空壳探针命中）；冷 token 首查仍 ~2-4s（GMGN 往返 + 1s 配额间隔，物理下限）。**权衡**：数据可能为缓存值（≤5min），换取毫秒回复；与上一版「实时拉取」要求的冲突以用户最新要求为准。
+   - **叙事覆盖**：`min_symbol_len` 3→1（短符号 meme 币不再静默跳过）；ineligible/N/A 增加 info 日志可观测；实测 LLM 链路正常（KIO 生成叙事 ✓），缺失主因是短符号跳过与信息贫乏 N/A，非三链配置差异（`global.narrative` 全局单一）。
    - **LLM 叙事（📚，异步 edit）**：查询先即时回复，再 `asyncio.create_task` 异步 `narrative_for(cand, info)` → `render_narrative_block`（仅 📚 叙事句单行——用户反馈移除 📈 数据行；24h 买卖笔数改入指标网格 `🛒 买`/`💸 卖` 行，`cand.buys_24h/sells_24h` 由 `_query_token` 从 `price` 对象提取）→ `edit_message_text` 追加到刚回复的消息。**延迟修复**：实测叙事 LLM 调用（timeout 10s）同步 await 导致回复延迟 4-15s，改为回复后异步编辑，回复延迟只含 GMGN 请求（~2-4s）。信号卡 `edit_candidate_with_narrative` 同样传入 info 输出数据行，保持一致。
    - 查询硬失败（hard_fail）不拒答——与信号管道 `_reject` 路径分叉，仅渲染警告。
 
