@@ -29,7 +29,7 @@
 |----|--------|---------|------|
 | sol | calibrated | true | 主跑 Paper |
 | bsc | calibrated | true | Paper 试跑中（2026-08-05 起） |
-| robinhood | draft | false | 待 BSC 稳定后（任务 7.x） |
+| robinhood | calibrated | true | Paper 试跑中（2026-08-05 起） |
 
 ### BSC 试跑记录（2026-08-05）
 
@@ -39,6 +39,12 @@
   修复：全局 `global.rate_limit.min_interval_sec: 1.0` 节流 + 429 `reset_at` 期间 fail-fast；
   BSC 轮询降到 signal 30s / trending 120s。修复后 0 封禁。
 - 试跑期只调 `chains.bsc.*`；`chains.sol` 未动
+
+### RH 试跑记录（2026-08-05）
+
+- 连通性 GO：signal=14 / trending=10 / info / security / price 全 OK
+- 三链并行（sol+bsc+rh）0 封禁；RH 降频（signal 30s / trending 120s）
+- Paper 首小时：1 开仓（STONKS $20），rejects 按链隔离（liq/trigger_mc/mc）
 
 ## 远程重置
 

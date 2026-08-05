@@ -55,10 +55,20 @@
 
 ## 7. Robinhood after BSC stable
 
-- [ ] 7.1 Re-check 4.2; separate deploy: RH `calibrated` + `enabled`; reassess rate limit
-- [ ] 7.2 Paper + tune only `chains.robinhood.*`; update calibration table
+- [x] 7.1 Re-check 4.2; separate deploy: RH `calibrated` + `enabled`; reassess rate limit
+      — connectivity re-confirmed GO (4.2); enabled with reduced intervals (signal 30s / trending 120s);
+        3 chains running with 0 x 429 over 10+ min (shared 1 req/s throttle holds)
+- [x] 7.2 Paper + tune only `chains.robinhood.*`; update calibration table
+      — 2026-08-05: 1 open (STONKS, $20), rejects keyed by chain (liq/trigger_mc/mc);
+        gates filtering as designed; no tuning yet; calibration table updated
 
 ## 8. Close-out
 
-- [ ] 8.1 Confirm no strategy numbers maintained outside yaml; diff has no accidental SOL edits during BSC/RH work
-- [ ] 8.2 Summarize connectivity + final per-chain strategy/filter pointers (keys only) in PR / calibration notes
+- [x] 8.1 Confirm no strategy numbers maintained outside yaml; diff has no accidental SOL edits during BSC/RH work
+      — strategy lives only in chains.yaml (verified: no numbers in code/docs; docs point to yaml keys only).
+        NOTE: SOL tuning (visiting_min 350 / hard_stop -0.20 / chase_max_pct / symbol_cooldown_min) was
+        added by a concurrent session and swept into rate-limit commits 4e95fc7/745e14e — attributed there,
+        not part of bsc-rh work; no further sol edits in bsc-rh commits
+- [x] 8.2 Summarize connectivity + final per-chain strategy/filter pointers (keys only) in PR / calibration notes
+      — connectivity: sol/bsc/robinhood all GO (records in docs/calibration.md + tasks 4.x);
+        per-chain pointers: `chains.sol|bsc|robinhood.filters|safety|strategy|execution` (yaml keys only)
