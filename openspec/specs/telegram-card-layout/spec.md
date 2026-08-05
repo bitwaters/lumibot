@@ -38,7 +38,7 @@ The signal push card MUST use the structure: title line, CA block line, `📊 �
 - **THEN** the status line shows the state marker and, when latency is known, `⏱ 延迟 Xs` on the same line
 
 ### Requirement: Metric field semantics
-The signal card MUST display these metrics with the specified Chinese labels and data sources: 市值 (market_cap), 开盘 (open age), 流动性 (liquidity), 持有人 (holder_count), `Top10 持有` (top10_rate), 热度 (visiting_count), `1H 成交` (volume_1h), 平台 (platform, only when present). Buy/sell taxes MUST be shown as `买税 X% · 卖税 Y%` on the safety line only when at least one tax is above zero. The term `投入` MUST be used for the deployed position amount (notional_usd); the term `名义` MUST NOT appear on any card. Price-fallback rows MUST label price fields explicitly (`入场价`, `现价`, `峰值`) when market cap is unavailable.
+The signal card MUST display these metrics with the specified Chinese labels and data sources: 市值 (market_cap), 开盘 (open age), 流动性 (liquidity), 持有人 (holder_count), `Top10` (top10_rate), 热度 (visiting_count), `1H 成交` (volume_1h), 平台 (platform, only when present). Buy/sell taxes MUST be shown as `买税 X% · 卖税 Y%` on the safety line only when at least one tax is above zero. The term `投入` MUST be used for the deployed position amount (notional_usd); the term `名义` MUST NOT appear on any card. Price-fallback rows MUST label price fields explicitly (`入场价`, `现价`, `峰值`) when market cap is unavailable.
 
 #### Scenario: Added fields displayed
 - **WHEN** volume_1h, platform, or taxes are available

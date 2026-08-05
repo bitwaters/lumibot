@@ -64,14 +64,11 @@ def test_signal_push_card_layout():
     assert text.startswith("📡 <b>$PEPE</b> · SOL")
     assert "<b>📊 指标</b>" in text
     assert "📍 CA: <code>SoLAddr123FullContractAddress</code>" in text
-    assert "💰 市值 <b>$125.0K</b> → 触发 <b>$100.0K</b>" in text
-    assert "⏱ 开盘 <b>12m</b>" in text
-    assert "💧 流动性 <b>$18.0K</b>" in text
-    assert "👥 持有人 <b>320</b>" in text
-    assert "👑 Top10 持有 <b>22.0%</b>" in text
-    assert "🔥 热度 <b>210</b>" in text
-    assert "🚀 1H 成交 <b>$8.1K</b>" in text
-    assert "🏭 pump.fun" in text
+    assert "<code>💰 市值    $125.0K → 触发 $100.0K (25.0%)</code>" in text
+    assert "<code>⏱ 开盘     12m       💧 流动性  $18.0K</code>" in text
+    assert "<code>👥 持有人  320       👑 Top10   22.0%</code>" in text
+    assert "<code>🔥 热度    210       🚀 1H 成交 $8.1K</code>" in text
+    assert "<code>🏭 平台    pump.fun</code>" in text
     assert "买税 5.0% · 卖税 5.0%" in text
     assert "⚠ 开发者持仓" in text
     assert "<b>✅ 已开仓 $20.00</b> · ⏱ 延迟 1.8s" in text
@@ -95,7 +92,7 @@ def test_signal_card_dual_source_badge():
 def test_signal_card_trending_without_trigger():
     cand = _cand(source=Source.TRENDING, trigger_mc=None)
     text = render_card(cand, paper_status="opening")
-    assert "💰 市值 <b>$125.0K</b>" in text
+    assert "<code>💰 市值    $125.0K</code>" in text
     assert "→ 触发" not in text
     assert "📡 <b>$PEPE</b> · SOL" in text
 
@@ -113,11 +110,11 @@ def test_signal_card_missing_metrics_dash():
         open_timestamp=None,
     )
     text = render_card(cand, paper_status="opening", latency_sec=None)
-    assert "💰 市值 <b>—</b>" in text
-    assert "💧 流动性 <b>—</b>" in text
-    assert "👑 Top10 持有 <b>—</b>" in text
-    assert "🚀 1H 成交 <b>—</b>" in text
-    assert "🏭" not in text
+    assert "<code>💰 市值    —</code>" in text
+    assert "💧 流动性  —" in text
+    assert "👑 Top10   —" in text
+    assert "🚀 1H 成交 —" in text
+    assert "🏭 平台" not in text
 
 
 def test_signal_card_tax_hidden_when_zero():

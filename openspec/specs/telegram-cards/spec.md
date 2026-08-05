@@ -8,7 +8,7 @@ After admission passes, Telegram signal push MUST use a single "信号推送" ca
 
 #### Scenario: Opened push shape
 - **WHEN** a candidate is admitted and paper status is opened
-- **THEN** the message includes the symbol-led title, `📍 CA:` code block, `📊 指标` section, metric/safety lines with the agreed labels (市值/开盘/流动性/持有人/Top10 持有/热度/1H 成交/平台), a bold status line such as `✅ 已开仓 $20.00`, and the per-chain button group
+- **THEN** the message includes the symbol-led title, `📍 CA:` code block, `📊 指标` section, metric/safety lines with the agreed labels (市值/开盘/流动性/持有人/Top10/热度/1H 成交/平台), a bold status line such as `✅ 已开仓 $20.00`, and the per-chain button group
 
 #### Scenario: Skipped open
 - **WHEN** paper status is skipped_open

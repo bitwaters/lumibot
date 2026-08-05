@@ -535,7 +535,7 @@ async def test_fresh_quote_without_mc_clears_card_mc(harness):
     )
     assert notifier.paper_status == ["opening", "opened"]
     assert await db.get_open_paper("sol", "nomc") is not None
-    assert "市值 <b>—</b>" in notifier.cards[0]
+    assert "市值    —" in notifier.cards[0]
     assert "$100.0K" not in notifier.cards[0]
 
 

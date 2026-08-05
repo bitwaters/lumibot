@@ -193,25 +193,29 @@ def render_card(
         and cand.trigger_mc > 0
         and cand.market_cap is not None
     )
+    metrics: list[tuple[str, str]] = []
     if has_trigger:
         chg = (cand.market_cap / cand.trigger_mc) - 1.0
-        lines.append(
-            f"💰 市值 {hbold(_usd_compact(cand.market_cap))} → 触发 "
-            f"{hbold(_usd_compact(cand.trigger_mc))}  ({_pct(chg)})"
+        metrics.append(
+            (
+                "💰 市值",
+                f"{_usd_compact(cand.market_cap)} → 触发 {_usd_compact(cand.trigger_mc)} ({_pct(chg)})",
+            )
         )
-        lines.append(_metric_pair("⏱ 开盘", format_relative_age(cand.open_timestamp), "💧 流动性", _usd_compact(cand.liquidity)))
-        lines.append(_metric_pair("👥 持有人", _num(cand.holder_count), "👑 Top10 持有", _pct(cand.top10_rate)))
-        lines.append(_metric_pair("🔥 热度", _num(cand.visiting_count), "🚀 1H 成交", _usd_compact(cand.volume_1h)))
-        if cand.platform:
-            lines.append(f"🏭 {_esc(cand.platform)}")
     else:
-        lines.append(_metric_pair("💰 市值", _usd_compact(cand.market_cap), "⏱ 开盘", format_relative_age(cand.open_timestamp)))
-        lines.append(_metric_pair("💧 流动性", _usd_compact(cand.liquidity), "👥 持有人", _num(cand.holder_count)))
-        lines.append(_metric_pair("👑 Top10 持有", _pct(cand.top10_rate), "🔥 热度", _num(cand.visiting_count)))
-        last = f"🚀 1H 成交 {hbold(_usd_compact(cand.volume_1h))}"
-        if cand.platform:
-            last += f"    🏭 {_esc(cand.platform)}"
-        lines.append(last)
+        metrics.append(("💰 市值", _usd_compact(cand.market_cap)))
+    metrics.append(("⏱ 开盘", format_relative_age(cand.open_timestamp)))
+    metrics.append(("💧 流动性", _usd_compact(cand.liquidity)))
+    metrics.append(("👥 持有人", _num(cand.holder_count)))
+    metrics.append(("👑 Top10", _pct(cand.top10_rate)))
+    metrics.append(("🔥 热度", _num(cand.visiting_count)))
+    metrics.append(("🚀 1H 成交", _usd_compact(cand.volume_1h)))
+    if cand.platform:
+        metrics.append(("🏭 平台", cand.platform))
+
+    lines.append(_metric_row(metrics[:1]))
+    for i in range(1, len(metrics), 2):
+        lines.append(_metric_row(metrics[i : i + 2]))
     lines.extend(
         [
             "",
@@ -224,6 +228,24 @@ def render_card(
 
 def _metric_pair(label_a: str, value_a: str, label_b: str, value_b: str) -> str:
     return f"{label_a} {hbold(value_a)}    {label_b} {hbold(value_b)}"
+
+
+def _display_width(text: str) -> int:
+    """Approximate terminal width: CJK / emoji / full-width = 2, ASCII = 1."""
+    return sum(2 if ord(ch) > 0x2E7F else 1 for ch in text)
+
+
+def _pad_display(text: str, width: int) -> str:
+    return text + " " * max(0, width - _display_width(text))
+
+
+def _metric_cell(label: str, value: str) -> str:
+    return f"{_pad_display(label, 10)} {_pad_display(value, 8)}"
+
+
+def _metric_row(cells: list[tuple[str, str]]) -> str:
+    """One aligned monospace metric row; label/value columns padded to fixed width."""
+    return hcode("  ".join(_metric_cell(label, value) for label, value in cells).rstrip())
 
 
 def append_news_line(card: str, news_line: str | None) -> str:
