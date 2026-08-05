@@ -384,7 +384,7 @@ async def test_symbol_block_catches_info_backfilled_symbol(tmp_path):
 async def test_chase_rejects_before_open(tmp_path):
     """Fresh quote way past the push price → chase reject, no open, cooldown released."""
     app = load_app_config("config/chains.yaml")
-    assert app.chains["sol"].filters.chase_max_pct == 0.10
+    assert app.chains["sol"].filters.chase_max_pct == 0.05
     db = Database(str(tmp_path / "t.db"))
     await db.connect()
     client = FakeClient()

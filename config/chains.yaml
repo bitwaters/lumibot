@@ -55,7 +55,7 @@ chains:
       holders_min: 100
       visiting_min: 350
       visiting_min_trending: 250  # trending payload can lag; require slightly higher heat (S6)
-      chase_max_pct: 0.10  # signal only: skip if current price ran >10% past push price (chasing top)
+      chase_max_pct: 0.05  # signal only: skip if current price ran >5% past push price (chasing top)
       volume_1h_min: 5000
       volume_mc_ratio_min: 0.05
       age_min_sec: 120    # reject tokens < 2 min old (dev dump risk)
@@ -123,13 +123,14 @@ chains:
         interval_sec: 120
         window: 1m
     filters:
-      mc_min: 1000
+      mc_min: 5000
       mc_max: 50000
       liquidity_min: 5000
       liquidity_ratio_min: 0.15
       top10_max: 0.30
       holders_min: 100
-      visiting_min: 80
+      visiting_min: 200
+      chase_max_pct: 0.10  # signal only: skip if current price ran >10% past push price (chasing top)
       volume_1h_min: 0
       volume_mc_ratio_min: 0
       age_min_sec: 120
@@ -157,7 +158,7 @@ chains:
         max_concurrent_positions: 0
     strategy:
       notional_usd: 20
-      hard_stop_pct: -0.30
+      hard_stop_pct: -0.20
       stage1_tp_pct: 0.25
       stage1_sell_mode: ratio
       stage1_sell_ratio: 0.50
@@ -166,9 +167,10 @@ chains:
       snapshots_sec: [60, 300, 900, 3600]
       loss_cooldown_min: 180
       post_close_cooldown_min: 45
-      pre_stage1_trail_enable: false
-      pre_stage1_trail_activate_pct: 0.15
-      pre_stage1_trail_drawdown_pct: 0.40
+      symbol_cooldown_min: 60
+      pre_stage1_trail_enable: true
+      pre_stage1_trail_activate_pct: 0.10
+      pre_stage1_trail_drawdown_pct: 0.20
       timeout_extend_if_profitable: false
       timeout_extend_hours: 1.0
       trail_dynamic: true
@@ -194,13 +196,14 @@ chains:
         interval_sec: 120
         window: 1m
     filters:
-      mc_min: 1000
+      mc_min: 5000
       mc_max: 50000
       liquidity_min: 5000
       liquidity_ratio_min: 0.15
       top10_max: 0.30
       holders_min: 80
-      visiting_min: 50
+      visiting_min: 200
+      chase_max_pct: 0.10  # signal only: skip if current price ran >10% past push price (chasing top)
       volume_1h_min: 0
       volume_mc_ratio_min: 0
       age_min_sec: 120
@@ -228,7 +231,7 @@ chains:
         max_concurrent_positions: 0
     strategy:
       notional_usd: 20
-      hard_stop_pct: -0.30
+      hard_stop_pct: -0.20
       stage1_tp_pct: 0.25
       stage1_sell_mode: ratio
       stage1_sell_ratio: 0.50
@@ -237,9 +240,10 @@ chains:
       snapshots_sec: [60, 300, 900, 3600]
       loss_cooldown_min: 180
       post_close_cooldown_min: 45
-      pre_stage1_trail_enable: false
-      pre_stage1_trail_activate_pct: 0.15
-      pre_stage1_trail_drawdown_pct: 0.40
+      symbol_cooldown_min: 60
+      pre_stage1_trail_enable: true
+      pre_stage1_trail_activate_pct: 0.10
+      pre_stage1_trail_drawdown_pct: 0.20
       timeout_extend_if_profitable: false
       timeout_extend_hours: 1.0
       trail_dynamic: true
