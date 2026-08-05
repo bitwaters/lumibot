@@ -328,8 +328,10 @@ class FakeNarrative:
 
 
 class _FakeSent:
+    """Simulates aiogram: sent.text is PLAIN (HTML tags stripped into entities)."""
+
     def __init__(self, text: str, edits: list) -> None:
-        self.text = text
+        self.text = text  # plain text as the API returns it
         self.reply_markup = None
         self.chat = type("C", (), {"id": 1})()
         self.message_id = 42
@@ -369,6 +371,8 @@ async def test_handle_ca_message_narrative_async_edit():
     await asyncio.sleep(0.05)
     assert edits, "narrative edit task should have fired"
     edited_text = edits[0][1]["text"]
+    # The edit must RE-RENDER the full HTML card (never reuse plain sent.text):
+    assert "<code>" in edited_text and "<b>" in edited_text
     assert "📚 马斯克概念 meme，社区热度高" in edited_text
     assert "24h" not in edited_text
     assert "🛒 买" in edited_text and "1,200" in edited_text

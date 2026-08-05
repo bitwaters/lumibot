@@ -26,6 +26,7 @@ from lumibot.models import Source, TokenCandidate
 from lumibot.narrative import NarrativeService
 from lumibot.safety import evaluate_safety, normalize_security
 from lumibot.telegram_notify import (
+    append_narrative_line,
     gmgn_keyboard,
     render_alerts,
     render_help,
@@ -214,16 +215,22 @@ async def _enrich_query_narrative(
     info: dict,
     sent: Message,
 ) -> None:
-    """Append the 📚 narrative block to a fresh query reply; fail-open."""
+    """Append the 📚 narrative block to a fresh query reply; fail-open.
+
+    The edit MUST re-render the card: `sent.text` is plain text (the API strips
+    HTML tags into entities), so using it would wipe all card formatting.
+    """
     try:
         line = await narrative.narrative_for(cand, info)
         block = render_narrative_block(info, line)
         if not block:
             return
+        card = render_query_card(cand)
+        text = append_narrative_line(card, block)
         await sent.bot.edit_message_text(
             chat_id=sent.chat.id,
             message_id=sent.message_id,
-            text=f"{sent.text}\n{block}",
+            text=text,
             parse_mode="HTML",
             disable_web_page_preview=True,
             reply_markup=sent.reply_markup,
