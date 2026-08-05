@@ -23,6 +23,7 @@ from lumibot.telegram_notify import (
     render_rejects,
     render_reset_paper,
     render_reset_paper_hint,
+    render_rounds,
     render_stats,
     render_status,
     render_unknown_command,
@@ -38,6 +39,7 @@ BOT_COMMANDS_COMMON: list[BotCommand] = [
     BotCommand(command="stats", description="模拟盈亏统计"),
     BotCommand(command="rejects", description="筛选拦截原因"),
     BotCommand(command="alerts", description="最近告警"),
+    BotCommand(command="rounds", description="历史轮次归档查询"),
     BotCommand(command="status", description="运行状态"),
 ]
 
@@ -246,6 +248,34 @@ def build_dispatcher(
                 }
             )
         await message.answer(render_status(chain_rows=chain_rows), parse_mode=None)
+
+    @router.message(Command("rounds"))
+    async def cmd_rounds(message: Message) -> None:
+        if not _authorized(message):
+            return
+        parts = (message.text or "").split()
+        if len(parts) == 2 and parts[1].isdigit():
+            round_id = int(parts[1])
+            detail: list[dict] = []
+            for name in app_cfg.chains:
+                summ = await db.archive_round_stats(round_id, chain=name)
+                if summ["closed_count"] or summ["open_count"]:
+                    detail.append(summ)
+            if not detail:
+                await message.answer(
+                    f"📦 round #{round_id} 无数据（用 /rounds 查看可用的轮次）。",
+                    parse_mode=None,
+                )
+                return
+            all_summ = await db.archive_round_stats(round_id, chain=None)
+            recent = await db.list_archive_closed_papers(round_id, limit=5)
+            await message.answer(
+                render_rounds([], detail=[all_summ, *detail], recent_closed=recent),
+                parse_mode=None,
+            )
+            return
+        rows = await db.list_archive_rounds(20)
+        await message.answer(render_rounds(rows), parse_mode=None)
 
     @router.message(Command("reset_paper"))
     async def cmd_reset_paper(message: Message) -> None:

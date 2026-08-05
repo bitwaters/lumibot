@@ -377,17 +377,62 @@ def render_reset_paper_hint() -> str:
 
 def render_reset_paper(deleted: dict[str, int], *, chain: str = "all") -> str:
     tag = "全部链" if chain == "all" else _chain_tag(chain)
-    return "\n".join(
-        [
-            f"🧹 [{tag}] 模拟已重置",
-            "",
-            f"仓位行 {deleted.get('paper_positions', 0)}  ·  成交 {deleted.get('paper_fills', 0)}",
-            f"跳过开仓 {deleted.get('paper_skip_opens', 0)}  ·  快照 {deleted.get('snapshots', 0)}",
-            f"冷却 {deleted.get('cooldowns', 0)}  ·  告警 {deleted.get('alerts', 0)}  ·  拦截 {deleted.get('reject_counts', 0)}",
-            "",
-            "用 /stats 查看新一轮统计。",
-        ]
-    )
+    round_id = deleted.get("round_id")
+    lines = [
+        f"🧹 [{tag}] 模拟已重置",
+        "",
+        f"仓位行 {deleted.get('paper_positions', 0)}  ·  成交 {deleted.get('paper_fills', 0)}",
+        f"跳过开仓 {deleted.get('paper_skip_opens', 0)}  ·  快照 {deleted.get('snapshots', 0)}",
+        f"冷却 {deleted.get('cooldowns', 0)}  ·  告警 {deleted.get('alerts', 0)}  ·  拦截 {deleted.get('reject_counts', 0)}",
+    ]
+    if round_id:
+        lines.append("")
+        lines.append(f"📦 旧数据已归档：round #{round_id}（用 /rounds 查询历史轮次）")
+    lines.append("")
+    lines.append("用 /stats 查看新一轮统计。")
+    return "\n".join(lines)
+
+
+def render_rounds(
+    rows: list,
+    *,
+    detail: list[dict] | None = None,
+    recent_closed: list | None = None,
+) -> str:
+    """Archived experiment rounds overview; optional per-chain detail of one round."""
+    if not rows and detail is None:
+        return "📦 归档轮次\n\n暂无历史轮次（/reset_paper 后才会有归档）。"
+    lines = ["📦 归档轮次", ""]
+    if detail is None:
+        for row in rows:
+            pnl = float(row["closed_pnl"] or 0)
+            scope = "全部链" if str(row["reset_chain"]) == "all" else _chain_tag(str(row["reset_chain"]))
+            lines.append(
+                f"· round #{row['round_id']} [{scope}] {format_duration(time.time() - float(row['reset_at']))}前  "
+                f"仓位 {row['positions']} (平 {row['closed_count']} / 在持 {row['open_count']})  "
+                f"已实现 {_pnl(pnl)}"
+            )
+        lines.append("")
+        lines.append("用 /rounds <id> 查看某轮详情（例如 /rounds 2）。")
+    else:
+        rid = detail[0]["round_id"] if detail else rows[0]["round_id"]
+        lines.append(f"round #{rid} 详情")
+        for d in detail:
+            chain_tag = "全部" if d["chain"] is None else _chain_tag(d["chain"])
+            wr = f"{d['win_rate'] * 100:.0f}%" if d["win_rate"] is not None else "—"
+            lines.append(
+                f"· [{chain_tag}] 平 {d['closed_count']} / 在持 {d['open_count']}  "
+                f"已实现 {_pnl(d['closed_pnl'])}  胜率 {wr}  "
+                f"硬止损 {d['hard_stop_count']}  均赢 {_usd_compact(d['avg_win_usd'])}  均亏 {_usd_compact(d['avg_loss_usd'])}"
+            )
+        if recent_closed:
+            lines.append("")
+            lines.append("最近平仓")
+            for row in recent_closed[:5]:
+                sym = row["symbol"] or row["token"][:8]
+                reason = CLOSE_REASON_LABELS.get(row["close_reason"] or "", row["close_reason"] or "—")
+                lines.append(f"· ${sym} {reason} {_pnl(float(row['realized_pnl'] or 0))}")
+    return "\n".join(lines)
 
 
 def render_rejects(rows: list) -> str:
@@ -495,7 +540,7 @@ def render_help(
     include_reset: bool = True,
 ) -> str:
     chains = enabled_chains or [n for n, c in app_cfg.chains.items() if c.enabled]
-    cmd_line = "命令：/positions /stats /rejects /alerts /status /chatid"
+    cmd_line = "命令：/positions /stats /rejects /alerts /status /rounds /chatid"
     if include_reset:
         cmd_line += " /reset_paper"
     lines = [
@@ -538,7 +583,7 @@ def render_help(
     )
     if include_reset:
         lines.append(
-            "· /reset_paper <sol|bsc|robinhood|all> confirm 清空对应链的本轮模拟统计（持仓/告警/拦截/冷却）"
+            "· /reset_paper <sol|bsc|robinhood|all> confirm 清空对应链的本轮模拟统计（旧数据归档，/rounds 可查）"
         )
     else:
         lines.append("· /reset_paper 仅限私聊控制台（群组不可用）")

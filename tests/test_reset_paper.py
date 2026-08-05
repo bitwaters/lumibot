@@ -58,6 +58,7 @@ async def test_reset_paper_experiment_clears_cohort_and_stats(tmp_path):
     assert deleted["paper_skip_opens"] >= 1
     assert deleted["alerts"] >= 1
     assert deleted["reject_counts"] >= 1
+    assert deleted.get("round_id") is not None
 
     after = await db.paper_stats_summary()
     assert after["open_count"] == 0
@@ -68,6 +69,47 @@ async def test_reset_paper_experiment_clears_cohort_and_stats(tmp_path):
     assert await db.count_active_cooldowns() == 0
     assert await db.list_recent_alerts(10) == []
     assert await db.top_reject_reasons(5) == []
+
+    # Archive must retain the cleared cohort under the reset round_id.
+    rounds = await db.list_archive_rounds()
+    assert len(rounds) == 1
+    row = rounds[0]
+    assert int(row["round_id"]) == deleted["round_id"]
+    assert int(row["positions"]) == 2
+    assert int(row["closed_count"]) == 1
+    assert abs(float(row["closed_pnl"]) + 6.0) < 1e-9
+    stats = await db.archive_round_stats(deleted["round_id"], chain="sol")
+    assert stats["closed_count"] == 1
+    assert stats["hard_stop_count"] == 1
+    recent = await db.list_archive_closed_papers(deleted["round_id"], limit=5, chain="sol")
+    assert len(recent) == 1
+    assert str(recent[0]["symbol"]) == "T"
+    cur = await db.conn.execute("SELECT COUNT(*) AS n FROM paper_fills_archive")
+    assert int((await cur.fetchone())["n"]) >= 2
+    cur = await db.conn.execute("SELECT COUNT(*) AS n FROM alerts_archive")
+    assert int((await cur.fetchone())["n"]) >= 1
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_reset_round_ids_increment_even_same_second(tmp_path):
+    """Two resets in the same second must produce distinct auto-increment rounds."""
+    db = Database(str(tmp_path / "t.db"))
+    await db.connect()
+    pos_a, _ = await db.try_open_paper(
+        "sol", "tokA", 1.05, 20 / 1.05, 20.0, peak_price=1.0, open_mark=1.0, symbol="A"
+    )
+    r1 = await db.reset_paper_experiment()
+    pos_b, _ = await db.try_open_paper(
+        "sol", "tokB", 1.05, 20 / 1.05, 20.0, peak_price=1.0, open_mark=1.0, symbol="B"
+    )
+    r2 = await db.reset_paper_experiment("sol")
+    assert r1["round_id"] != r2["round_id"]
+    rounds = await db.list_archive_rounds()
+    assert len(rounds) == 2
+    rid_map = {int(r["round_id"]): int(r["positions"]) for r in rounds}
+    assert rid_map[r1["round_id"]] == 1
+    assert rid_map[r2["round_id"]] == 1
     await db.close()
 
 
@@ -92,7 +134,6 @@ async def test_reset_paper_experiment_scoped_to_chain(tmp_path):
     assert deleted["paper_positions"] == 1
     assert deleted["alerts"] == 1
     assert deleted["reject_counts"] == 1
-
     # sol untouched — including fills/snapshots tied to sol positions
     assert await db.get_open_paper("sol", "tok") is not None
     sol_summary = await db.paper_stats_summary("sol")
@@ -111,6 +152,17 @@ async def test_reset_paper_experiment_scoped_to_chain(tmp_path):
     cur = await db.conn.execute(
         "SELECT COUNT(*) AS n FROM snapshots WHERE position_id=?", (sol_pos,)
     )
+    assert int((await cur.fetchone())["n"]) == 1
+
+    # Only bsc rows archived; sol rows must NOT be in the archive.
+    rounds = await db.list_archive_rounds()
+    assert len(rounds) == 1
+    rid = int(rounds[0]["round_id"])
+    stats_bsc = await db.archive_round_stats(rid, chain="bsc")
+    assert stats_bsc["open_count"] == 1
+    stats_sol = await db.archive_round_stats(rid, chain="sol")
+    assert stats_sol["open_count"] == 0
+    cur = await db.conn.execute("SELECT COUNT(*) AS n FROM paper_fills_archive")
     assert int((await cur.fetchone())["n"]) == 1
     await db.close()
 

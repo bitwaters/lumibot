@@ -11,6 +11,26 @@ import aiosqlite
 T = TypeVar("T")
 
 
+ARCHIVE_TABLES = ("paper_positions", "paper_fills", "snapshots", "alerts")
+
+ARCHIVE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "paper_positions": (
+        "id", "chain", "token", "symbol", "status", "entry_price", "open_mark",
+        "qty", "notional_usd", "cost_basis", "peak_price", "stage1_done",
+        "opened_at", "closed_at", "close_reason", "realized_pnl",
+    ),
+    "paper_fills": (
+        "id", "position_id", "side", "price", "qty", "notional_usd", "created_at",
+    ),
+    "snapshots": (
+        "id", "position_id", "offset_sec", "price", "position_closed", "created_at",
+    ),
+    "alerts": (
+        "id", "chain", "token", "source_key", "created_at", "payload_json",
+    ),
+}
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cooldowns (
   chain TEXT NOT NULL,
@@ -102,6 +122,71 @@ CREATE TABLE IF NOT EXISTS signal_log (
   payload_json TEXT,
   created_at REAL NOT NULL
 );
+
+-- Archive tables: /reset_paper moves (not destroys) prior experiment data here,
+-- keyed by round_id (auto-increment experiment round), so multi-round analysis
+-- stays possible.
+CREATE TABLE IF NOT EXISTS rounds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at REAL NOT NULL,
+  chain TEXT NOT NULL DEFAULT 'all'
+);
+
+CREATE TABLE IF NOT EXISTS paper_positions_archive (
+  round_id INTEGER NOT NULL,
+  id INTEGER,
+  chain TEXT NOT NULL,
+  token TEXT NOT NULL,
+  symbol TEXT,
+  status TEXT NOT NULL,
+  entry_price REAL NOT NULL,
+  open_mark REAL,
+  qty REAL NOT NULL,
+  notional_usd REAL NOT NULL,
+  cost_basis REAL NOT NULL,
+  peak_price REAL NOT NULL,
+  stage1_done INTEGER NOT NULL DEFAULT 0,
+  opened_at REAL NOT NULL,
+  closed_at REAL,
+  close_reason TEXT,
+  realized_pnl REAL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS paper_fills_archive (
+  round_id INTEGER NOT NULL,
+  id INTEGER,
+  position_id INTEGER NOT NULL,
+  side TEXT NOT NULL,
+  price REAL NOT NULL,
+  qty REAL NOT NULL,
+  notional_usd REAL NOT NULL,
+  created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS snapshots_archive (
+  round_id INTEGER NOT NULL,
+  id INTEGER,
+  position_id INTEGER NOT NULL,
+  offset_sec INTEGER NOT NULL,
+  price REAL NOT NULL,
+  position_closed INTEGER NOT NULL DEFAULT 0,
+  created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS alerts_archive (
+  round_id INTEGER NOT NULL,
+  id INTEGER,
+  chain TEXT NOT NULL,
+  token TEXT NOT NULL,
+  source_key TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  payload_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_pos_archive_round ON paper_positions_archive(round_id, chain);
+CREATE INDEX IF NOT EXISTS idx_fills_archive_round ON paper_fills_archive(round_id);
+CREATE INDEX IF NOT EXISTS idx_snap_archive_round ON snapshots_archive(round_id);
+CREATE INDEX IF NOT EXISTS idx_alerts_archive_round ON alerts_archive(round_id, chain);
 
 CREATE INDEX IF NOT EXISTS idx_cooldowns_token ON cooldowns(chain, token, until_ts);
 CREATE INDEX IF NOT EXISTS idx_paper_status ON paper_positions(chain, status);
@@ -757,59 +842,68 @@ class Database:
         }
 
     async def reset_paper_experiment(self, chain: str = "all") -> dict[str, int]:
-        """Clear paper state + alerts/rejects/cooldowns for a fresh simulation cohort.
+        """Clear paper state for a fresh simulation cohort, archiving the old one.
 
         chain="all" clears every chain (legacy full-table behaviour). Any other value
         scopes the delete to that chain only, using position_id subqueries for the
         two tables (paper_fills, snapshots) that have no chain column of their own.
+
+        Archived rows are copied into the *_archive tables under a round_id (an
+        auto-increment round serial) BEFORE being deleted, so earlier cohorts stay
+        analyzable via /rounds or direct SQL on the archive tables. signal_log is
+        never touched.
         """
-        tables = (
-            "paper_fills",
-            "snapshots",
-            "paper_positions",
-            "paper_skip_opens",
-            "cooldowns",
-            "alerts",
-            "reject_counts",
-        )
+        round_id: int | None = None
 
         async def _run() -> dict[str, int]:
-            out: dict[str, int] = {}
+            nonlocal round_id
+            out: dict[str, int] = {"round_id": 0}
             await self.conn.execute("BEGIN IMMEDIATE")
             try:
+                cur = await self.conn.execute(
+                    "INSERT INTO rounds(created_at, chain) VALUES(?,?)",
+                    (time.time(), chain),
+                )
+                round_id = int(cur.lastrowid or 0)
+                out["round_id"] = round_id
                 if chain == "all":
-                    for table in tables:
+                    for table in ARCHIVE_TABLES:
+                        await self._archive_table(table, round_id)
+                    for table in ARCHIVE_TABLES + (
+                        "paper_skip_opens",
+                        "cooldowns",
+                        "reject_counts",
+                    ):
                         cur = await self.conn.execute(f"DELETE FROM {table}")
                         out[table] = int(cur.rowcount or 0)
                 else:
                     cur = await self.conn.execute(
-                        "DELETE FROM paper_fills WHERE position_id IN "
-                        "(SELECT id FROM paper_positions WHERE chain=?)",
-                        (chain,),
+                        "SELECT id FROM paper_positions WHERE chain=?", (chain,)
                     )
-                    out["paper_fills"] = int(cur.rowcount or 0)
-                    cur = await self.conn.execute(
-                        "DELETE FROM snapshots WHERE position_id IN "
-                        "(SELECT id FROM paper_positions WHERE chain=?)",
-                        (chain,),
-                    )
-                    out["snapshots"] = int(cur.rowcount or 0)
-                    cur = await self.conn.execute(
-                        "DELETE FROM paper_positions WHERE chain=?", (chain,)
-                    )
-                    out["paper_positions"] = int(cur.rowcount or 0)
-                    cur = await self.conn.execute(
-                        "DELETE FROM paper_skip_opens WHERE chain=?", (chain,)
-                    )
-                    out["paper_skip_opens"] = int(cur.rowcount or 0)
-                    cur = await self.conn.execute("DELETE FROM cooldowns WHERE chain=?", (chain,))
-                    out["cooldowns"] = int(cur.rowcount or 0)
-                    cur = await self.conn.execute("DELETE FROM alerts WHERE chain=?", (chain,))
-                    out["alerts"] = int(cur.rowcount or 0)
-                    cur = await self.conn.execute(
-                        "DELETE FROM reject_counts WHERE chain=?", (chain,)
-                    )
-                    out["reject_counts"] = int(cur.rowcount or 0)
+                    pos_ids = [r["id"] for r in await cur.fetchall()]
+                    await self._archive_table("paper_positions", round_id, "chain=?", (chain,))
+                    if pos_ids:
+                        marks = ",".join("?" * len(pos_ids))
+                        await self._archive_table(
+                            "paper_fills", round_id, f"position_id IN ({marks})", pos_ids
+                        )
+                        await self._archive_table(
+                            "snapshots", round_id, f"position_id IN ({marks})", pos_ids
+                        )
+                    await self._archive_table("alerts", round_id, "chain=?", (chain,))
+                    for table in ("paper_positions", "paper_skip_opens", "cooldowns", "alerts", "reject_counts"):
+                        cur = await self.conn.execute(f"DELETE FROM {table} WHERE chain=?", (chain,))
+                        out[table] = int(cur.rowcount or 0)
+                    if pos_ids:
+                        marks = ",".join("?" * len(pos_ids))
+                        for table in ("paper_fills", "snapshots"):
+                            cur = await self.conn.execute(
+                                f"DELETE FROM {table} WHERE position_id IN ({marks})", pos_ids
+                            )
+                            out[table] = int(cur.rowcount or 0)
+                    else:
+                        out["paper_fills"] = 0
+                        out["snapshots"] = 0
                 await self.conn.commit()
             except Exception:
                 await self.conn.rollback()
@@ -817,6 +911,29 @@ class Database:
             return out
 
         return await self._with_write(_run)
+
+    async def _archive_table(
+        self,
+        table: str,
+        round_id: int,
+        where_sql: str | None = None,
+        params: tuple | list = (),
+    ) -> int:
+        """Copy rows from a live table into its *_archive table with a round_id tag.
+
+        Runs inside the caller's transaction; must be invoked within reset's
+        BEGIN IMMEDIATE block.
+        """
+        cols = ARCHIVE_COLUMNS[table]
+        col_list = ", ".join(cols)
+        sql = (
+            f"INSERT INTO {table}_archive (round_id, {col_list}) "
+            f"SELECT {round_id}, {col_list} FROM {table}"
+        )
+        if where_sql:
+            sql += f" WHERE {where_sql}"
+        cur = await self.conn.execute(sql, params)
+        return int(cur.rowcount or 0)
 
     async def top_reject_reasons(self, limit: int = 15) -> list[aiosqlite.Row]:
         cur = await self.conn.execute(
@@ -870,3 +987,84 @@ class Database:
             )
         row = await cur.fetchone()
         return int(row["c"] if row else 0)
+
+    async def list_archive_rounds(self, limit: int = 20) -> list[aiosqlite.Row]:
+        """Archived experiment rounds, newest first, with cohort summaries."""
+        cur = await self.conn.execute(
+            """
+            SELECT
+              a.round_id,
+              r.chain AS reset_chain,
+              r.created_at AS reset_at,
+              COUNT(*) AS positions,
+              COALESCE(SUM(CASE WHEN a.status='closed' THEN 1 ELSE 0 END), 0) AS closed_count,
+              COALESCE(SUM(CASE WHEN a.status='open' THEN 1 ELSE 0 END), 0) AS open_count,
+              COALESCE(SUM(CASE WHEN a.status='closed' THEN a.realized_pnl ELSE 0 END), 0)
+                AS closed_pnl
+            FROM paper_positions_archive a
+            JOIN rounds r ON r.id = a.round_id
+            GROUP BY a.round_id
+            ORDER BY a.round_id DESC
+            LIMIT ?
+            """,
+            (max(0, limit),),
+        )
+        return list(await cur.fetchall())
+
+    async def archive_round_stats(
+        self, round_id: int, chain: str | None = None
+    ) -> dict[str, Any]:
+        """Per-round summary from the archive tables (mirrors paper_stats_summary)."""
+        where = "AND chain=?" if chain else ""
+        params: tuple[Any, ...] = (round_id,) + ((chain,) if chain else ())
+        cur = await self.conn.execute(
+            f"""
+            SELECT
+              COALESCE(SUM(CASE WHEN status='open' THEN 1 ELSE 0 END), 0) AS open_count,
+              COALESCE(SUM(CASE WHEN status='closed' THEN 1 ELSE 0 END), 0) AS closed_count,
+              COALESCE(SUM(CASE WHEN status='closed' THEN realized_pnl ELSE 0 END), 0)
+                AS closed_pnl,
+              COALESCE(SUM(CASE WHEN status='closed' AND realized_pnl > 0 THEN 1 ELSE 0 END), 0)
+                AS win_count,
+              COALESCE(SUM(CASE WHEN status='closed' AND close_reason='hard_stop' THEN 1 ELSE 0 END), 0)
+                AS hard_stop_count,
+              AVG(CASE WHEN status='closed' AND realized_pnl > 0 THEN realized_pnl END)
+                AS avg_win_usd,
+              AVG(CASE WHEN status='closed' AND realized_pnl <= 0 THEN realized_pnl END)
+                AS avg_loss_usd
+            FROM paper_positions_archive
+            WHERE round_id=? {where}
+            """,
+            params,
+        )
+        row = await cur.fetchone()
+        closed = int(row["closed_count"] if row else 0)
+        win_count = int(row["win_count"] if row and row["win_count"] is not None else 0)
+        return {
+            "round_id": round_id,
+            "chain": chain,
+            "open_count": int(row["open_count"] if row else 0),
+            "closed_count": closed,
+            "closed_pnl": float(row["closed_pnl"] if row else 0),
+            "win_count": win_count,
+            "win_rate": (win_count / closed) if closed > 0 else None,
+            "hard_stop_count": int(row["hard_stop_count"] if row else 0),
+            "avg_win_usd": float(row["avg_win_usd"]) if row and row["avg_win_usd"] is not None else None,
+            "avg_loss_usd": float(row["avg_loss_usd"]) if row and row["avg_loss_usd"] is not None else None,
+        }
+
+    async def list_archive_closed_papers(
+        self, round_id: int, limit: int = 5, chain: str | None = None
+    ) -> list[aiosqlite.Row]:
+        where = "AND chain=?" if chain else ""
+        params: tuple[Any, ...] = (round_id,) + ((chain,) if chain else ()) + (max(0, limit),)
+        cur = await self.conn.execute(
+            f"""
+            SELECT * FROM paper_positions_archive
+            WHERE round_id=? {where} AND status='closed'
+            ORDER BY closed_at DESC
+            LIMIT ?
+            """,
+            params,
+        )
+        return list(await cur.fetchall())

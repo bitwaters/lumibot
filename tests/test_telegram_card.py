@@ -417,6 +417,7 @@ def test_bot_quick_commands():
         "stats",
         "rejects",
         "alerts",
+        "rounds",
         "status",
         "reset_paper",
     ]
@@ -430,6 +431,7 @@ def test_bot_quick_commands():
         "stats",
         "rejects",
         "alerts",
+        "rounds",
         "status",
     ]
     assert all(c.description for c in BOT_COMMANDS)

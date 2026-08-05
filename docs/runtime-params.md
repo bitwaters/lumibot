@@ -38,6 +38,14 @@ OpenSpec 归档里的 design / delta specs 可能仍写着历史数字（例如�
 
 关仓后补写的 due 快照若本机曾长时间离线，缺失的 offset（如 60s/300s）会用**关仓时同一标记价**补齐。这是 best-effort：时间序列在该场景下不精确，仅保证 offset 行存在便于事后对齐。
 
+## 实验轮次归档
+
+`/reset_paper <chain|all> confirm` 不再物理丢弃旧数据：`paper_positions / paper_fills / snapshots / alerts` 在删除前先按 `round_id`（自增轮次序号，1/2/3…）复制进 `*_archive` 表，随后才清空活跃表。`signal_log`（拒绝日志）从不删除；`reject_counts / cooldowns / paper_skip_opens` 无归档价值直接清。
+
+- 查询：`/rounds` 列出归档轮次概览；`/rounds <id>` 查看该轮各链统计与最近平仓
+- 直接 SQL 分析：`SELECT * FROM paper_positions_archive WHERE round_id=<id>`；跨轮对比按 `round_id` 分组即可
+- 重启不丢：归档表持久化在同一个 lumibot.db
+
 ## Live（U1）
 
 `LiveExecutor` 为 Paper-first 桩：不落实盘单、不加载私钥。`execution.mode: live` 仅做风控检查后 noop。实盘路由另开变更。
