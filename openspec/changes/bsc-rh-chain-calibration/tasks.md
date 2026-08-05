@@ -33,7 +33,7 @@
 
 - [x] 5.1 `evm_v1` missing honeypot / renounced / open_source → reject
 - [x] 5.2 TG `[BSC]` / `[RH]` labels + gmgn URLs
-- [ ] 5.3 Optional: `ChainPipeline("bsc")` smoke with EVM fixtures
+- [x] 5.3 Optional: `ChainPipeline("bsc")` smoke with EVM fixtures
 - [x] 5.4 Full pytest green
 
 ## 6. BSC trial → enable (isolate from SOL)
