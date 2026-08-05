@@ -25,9 +25,12 @@
 
 ## 4. Connectivity (chains still disabled)
 
-- [ ] 4.1 VPS IPv4 + API key: sample `bsc` signal / trending / info / security / price; record completeness
-- [ ] 4.2 Repeat for `robinhood` (API key `robinhood`, TG path `/rh/`)
-- [ ] 4.3 Spot-check quote_tokens; go/no-go for BSC Paper from security empty-rate
+- [x] 4.1 VPS IPv4 + API key: sample `bsc` signal / trending / info / security / price; record completeness
+      — GO: signal=50, trending=10, info_ok (37 fields), security_ok, price_ok, errors=[]
+- [x] 4.2 Repeat for `robinhood` (API key `robinhood`, TG path `/rh/`)
+      — GO: signal=14, trending=10, info_ok, security_ok, price_ok, errors=[]
+- [x] 4.3 Spot-check quote_tokens; go/no-go for BSC Paper from security empty-rate
+      — BNB+USDC ok; security empty-rate 0/10 (10/10 non-empty) → GO
 
 ## 5. EVM / chain regression tests
 
@@ -38,7 +41,7 @@
 
 ## 6. BSC trial → enable (isolate from SOL)
 
-- [ ] 6.1 After 4.x go: `chains.bsc` → `calibrated` + `enabled: true`; `robinhood.enabled: false`; deploy
+- [x] 6.1 After 4.x go: `chains.bsc` → `calibrated` + `enabled: true`; `robinhood.enabled: false`; deploy
 - [ ] 6.2 Smoke: `/status` shows SOL and BSC separately; `/stats` sections independent; rejects keyed by chain
 - [ ] 6.3 Paper observe; tune **only** `chains.bsc.*` (including `strategy` if needed) — do not edit `chains.sol`
 - [ ] 6.4 Rate-limit pressure → lengthen/pause BSC sources only

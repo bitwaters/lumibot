@@ -83,7 +83,7 @@ async def test_config_loads_disabled_draft_chains():
 
     cfg = load_app_config("config/chains.yaml")
     assert cfg.chains["sol"].enabled
-    assert cfg.chains["bsc"].calibration_status == "draft"
-    assert not cfg.chains["bsc"].enabled
+    assert cfg.chains["bsc"].calibration_status == "calibrated"
+    assert cfg.chains["bsc"].enabled
     assert cfg.chains["robinhood"].calibration_status == "draft"
     assert not cfg.chains["robinhood"].enabled

@@ -98,8 +98,8 @@ chains:
       trail_dynamic: true
 
   bsc:
-    enabled: false
-    calibration_status: draft
+    enabled: true
+    calibration_status: calibrated
     safety_profile: evm_v1
     quote_tokens:
       - symbol: BNB
