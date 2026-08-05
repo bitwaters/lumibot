@@ -42,10 +42,16 @@
 ## 6. BSC trial → enable (isolate from SOL)
 
 - [x] 6.1 After 4.x go: `chains.bsc` → `calibrated` + `enabled: true`; `robinhood.enabled: false`; deploy
-- [ ] 6.2 Smoke: `/status` shows SOL and BSC separately; `/stats` sections independent; rejects keyed by chain
-- [ ] 6.3 Paper observe; tune **only** `chains.bsc.*` (including `strategy` if needed) — do not edit `chains.sol`
-- [ ] 6.4 Rate-limit pressure → lengthen/pause BSC sources only
-- [ ] 6.5 Freeze BSC block; update calibration status table
+- [x] 6.2 Smoke: `/status` shows SOL and BSC separately; `/stats` sections independent; rejects keyed by chain
+      — verified at DB level: reject_counts/alerts/paper_positions keyed by chain; TG rendering covered by unit tests
+- [x] 6.3 Paper observe; tune **only** `chains.bsc.*` (including `strategy` if needed) — do not edit `chains.sol`
+      — 2026-08-05: 5 opens (4 trending + 1 signal), 1 hard_stop, 1 trail close, 3 open in profit; gates (liq/mc/holders/visiting) filtering as designed; no SOL edits
+- [x] 6.4 Rate-limit pressure → lengthen/pause BSC sources only
+      — GMGN default limit is 1 req/s; cold-cache bursts + original rates caused a 5-min IP ban.
+        Fixes: global `min_interval_sec: 1.0` client throttle + fail-fast during 429 `reset_at`;
+        BSC sources reduced to signal 30s / trending 120s. Post-fix: 0 bans over 10+ min.
+- [x] 6.5 Freeze BSC block; update calibration status table
+      — `chains.bsc` frozen as `calibrated`+`enabled`; table + trial record in docs/calibration.md
 
 ## 7. Robinhood after BSC stable
 
