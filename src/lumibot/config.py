@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import logging
 from pathlib import Path
 from typing import Any
@@ -151,18 +150,32 @@ class RateLimitCfg(BaseModel):
     refill_per_sec: float = 6
 
 
+class NewsCfg(BaseModel):
+    enabled: bool = False
+    poll_sec: int = 60
+    lookback_min: int = 120
+    min_score: float = 0.6
+    edit_timeout_ms: int = 3000
+    min_symbol_len: int = 3
+    symbol_blocklist: list[str] = Field(default_factory=list)
+    market_coins: list[str] = Field(default_factory=lambda: ["SOL", "ETH", "BTC"])
+    market_keywords: list[str] = Field(default_factory=lambda: ["meme", "meme coin", "pump", "launch"])
+
+
 class GlobalCfg(BaseModel):
     live_master_switch: bool = False
     rate_limit: RateLimitCfg = Field(default_factory=RateLimitCfg)
     enrichment_cache_ttl_sec: int = 300
     security_cache_ttl_sec: int = 3600
     price_source: str = "token_info"
+    news: NewsCfg | None = None
 
 
 class AppConfig(BaseModel):
     global_: GlobalCfg = Field(alias="global")
     # Legacy-only: no longer read at runtime. Kept so old yaml files still parse;
-    # load_app_config() warns and ignores it (see PROFILE_BY_CHAIN / chain strategy copy).
+    # load_app_config() strips this for compatibility and rejects chained configs without
+    # per-chain strategy now (see PROFILE_BY_CHAIN / per-chain strategy validation).
     strategy: StrategyCfg | None = None
     chains: dict[str, ChainCfg]
 
@@ -182,6 +195,7 @@ class Settings(BaseSettings):
     lumibot_config: str = "config/chains.yaml"
     lumibot_db_path: str = "data/lumibot.db"
     lumibot_skip_ipv4_check: bool = False
+    opennews_token: str = ""
 
     @staticmethod
     def _parse_id_list(raw: str, *, env_name: str) -> list[int]:
@@ -225,11 +239,10 @@ def load_app_config(path: str | Path) -> AppConfig:
     raw = Path(path).read_text(encoding="utf-8")
     data: dict[str, Any] = yaml.safe_load(raw) or {}
 
-    top_level_strategy = data.get("strategy")
-    if top_level_strategy is not None:
+    if data.get("strategy") is not None:
         logger.warning(
-            "config: top-level 'strategy' is deprecated and ignored at runtime; "
-            "define it under each chains.<name>.strategy block instead"
+            "config: top-level 'strategy' is deprecated and not used; "
+            "define strategy under each chains.<name>.strategy block"
         )
 
     chains = data.get("chains") or {}
@@ -237,13 +250,10 @@ def load_app_config(path: str | Path) -> AppConfig:
         if not isinstance(cfg, dict):
             raise ValueError(f"invalid config for chain {name}: expected a mapping")
         if cfg.get("strategy") is None:
-            if top_level_strategy is not None:
-                cfg["strategy"] = copy.deepcopy(top_level_strategy)
-            else:
-                raise ValueError(
-                    f"invalid config for chain {name}: missing required 'strategy' block "
-                    "(chains.<name>.strategy) and no legacy top-level 'strategy' to fall back on"
-                )
+            raise ValueError(
+                f"invalid config for chain {name}: missing required 'strategy' block "
+                "(chains.<name>.strategy) with per-chain strategy required"
+            )
         try:
             chain_cfg = ChainCfg.model_validate(cfg)
         except Exception as exc:  # noqa: BLE001

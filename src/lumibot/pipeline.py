@@ -23,6 +23,7 @@ from lumibot.filters import (
 from lumibot.gmgn.client import GmgnClient
 from lumibot.models import Source, TokenCandidate
 from lumibot.safety import evaluate_safety, normalize_security
+from lumibot.news import NewsPoller
 from lumibot.telegram_notify import TelegramNotifier
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ class ChainPipeline:
         client: GmgnClient,
         db: Database,
         notifier: TelegramNotifier,
+        news_poller: NewsPoller | None = None,
     ) -> None:
         self.chain = chain
         self.cfg = chain_cfg
@@ -44,6 +46,7 @@ class ChainPipeline:
         self.client = client
         self.db = db
         self.notifier = notifier
+        self.news_poller = news_poller
         self._tasks: list[asyncio.Task] = []
         self._stop = asyncio.Event()
         # Recent source sightings for dual-source (signal↔trending) within TTL.
@@ -84,9 +87,11 @@ class ChainPipeline:
 
     async def stop(self) -> None:
         self._stop.set()
-        for t in self._tasks:
+        tasks = list(self._tasks)
+        for t in tasks:
             t.cancel()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
 
     async def _loop_signal(self) -> None:
@@ -96,7 +101,10 @@ class ChainPipeline:
             try:
                 rows = await self.client.get_token_signal(self.chain, types)
                 for raw in rows:
-                    await self._handle_signal(raw)
+                    try:
+                        await self._handle_signal(raw)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("signal row handling failed chain=%s", self.chain)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
@@ -114,7 +122,10 @@ class ChainPipeline:
                     continue
                 rows = await self.client.get_trending(self.chain, window)
                 for raw in rows:
-                    await self._handle_trending(raw)
+                    try:
+                        await self._handle_trending(raw)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("trending row handling failed chain=%s", self.chain)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
@@ -360,7 +371,43 @@ class ChainPipeline:
             return
         # Push card + open_mark share this uncached snapshot (not gate/enrich cache).
         apply_push_snapshot(cand, info, price=price, market_cap=mc)
+        send_ts = time.time()
+        latency_sec = (send_ts - cand.seen_at) if cand.seen_at is not None else None
 
+        open_paper = await self.db.get_open_paper(cand.chain, cand.address)
+        if open_paper is not None:
+            text_payload = {
+                "chain": cand.chain,
+                "address": cand.address,
+                "source": cand.source_key,
+                "symbol": cand.symbol,
+                "dual_source": cand.dual_source,
+                "exec_status": "skipped_open",
+                "ts": send_ts,
+            }
+            if cand.open_timestamp is not None:
+                text_payload["open_timestamp"] = cand.open_timestamp
+            if latency_sec is not None:
+                text_payload["latency_ms"] = int(latency_sec * 1000)
+
+            any_ok, _all_ok, sent_message_ids = await self.notifier.send_candidate(
+                cand,
+                latency_sec=latency_sec,
+                paper_status="precheck_skipped_open",
+            )
+            if not any_ok:
+                await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
+                logger.error(
+                    "telegram_failed chain=%s token=%s source=%s; cooldown released",
+                    cand.chain,
+                    cand.address,
+                    cand.source_key,
+                )
+                return
+            await self.db.insert_alert(
+                cand.chain, cand.address, cand.source_key, json.dumps(text_payload)
+            )
+            return
 
         text_payload: dict[str, Any] = {
             "chain": cand.chain,
@@ -368,55 +415,92 @@ class ChainPipeline:
             "source": cand.source_key,
             "symbol": cand.symbol,
             "dual_source": cand.dual_source,
+            "ts": send_ts,
         }
         if cand.open_timestamp is not None:
             text_payload["open_timestamp"] = cand.open_timestamp
-
-        exec_result = await self.executor.on_alert(cand)
-        if exec_result.status == "no_price":
-            # Defensive: pipeline already quoted; do not push a no-price card.
-            await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
-            await self._reject(cand, "no_price")
-            return
-        if exec_result.status == "blocked_max_positions":
-            # Race: slot filled between early check and open. Free cooldown so a
-            # later free slot can be used; still push so operators see the cap hit.
-            await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
-        send_ts = time.time()
-        latency_sec = (send_ts - cand.seen_at) if cand.seen_at is not None else None
-        text_payload["ts"] = send_ts
         if latency_sec is not None:
             text_payload["latency_ms"] = int(latency_sec * 1000)
-        text_payload["exec_status"] = exec_result.status
-        any_ok, all_ok = await self.notifier.send_candidate(
-            cand, paper=exec_result, latency_sec=latency_sec
+        text_payload["exec_status"] = "opening"
+        any_ok, _all_ok, sent_message_ids = await self.notifier.send_candidate(
+            cand,
+            latency_sec=latency_sec,
+            paper_status="opening",
         )
         if not any_ok:
             await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
-            if exec_result.status == "opened" and exec_result.position_id is not None:
-                await self.db.abort_paper_open(exec_result.position_id)
-                logger.error(
-                    "telegram_failed chain=%s token=%s source=%s; cooldown released; paper aborted id=%s",
-                    cand.chain,
-                    cand.address,
-                    cand.source_key,
-                    exec_result.position_id,
-                )
-            else:
-                logger.error(
-                    "telegram_failed chain=%s token=%s source=%s; cooldown released",
-                    cand.chain,
-                    cand.address,
-                    cand.source_key,
-                )
-            return
-        if not all_ok:
             logger.error(
-                "telegram_partial chain=%s token=%s source=%s; cooldown kept",
+                "telegram_failed chain=%s token=%s source=%s; cooldown released",
                 cand.chain,
                 cand.address,
                 cand.source_key,
             )
+            return
+
+        try:
+            exec_result = await self.executor.on_alert(cand)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "executor_on_alert_failed chain=%s token=%s", cand.chain, cand.address
+            )
+            await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
+            await self._reject(cand, "executor_error")
+            try:
+                await self.notifier.edit_candidate(
+                    cand,
+                    latency_sec=latency_sec,
+                    message_ids=sent_message_ids,
+                    paper_status="executor_error",
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "executor_error_edit_failed chain=%s token=%s",
+                    cand.chain,
+                    cand.address,
+                )
+            return
+        text_payload["exec_status"] = exec_result.status
+        any_ok, all_ok = await self.notifier.edit_candidate(
+            cand,
+            paper=exec_result,
+            latency_sec=latency_sec,
+            message_ids=sent_message_ids,
+        )
+        if not any_ok:
+            logger.error(
+                "telegram_update_failed chain=%s token=%s source=%s; card remains opening",
+                cand.chain,
+                cand.address,
+                cand.source_key,
+            )
+
+        if exec_result.status == "no_price":
+            await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
+            await self._reject(cand, "no_price")
+            return
+
+        if exec_result.status == "blocked_max_positions":
+            # Race: slot filled between early check and open. Free cooldown so a
+            # later free slot can be used; still keep a final card so operators see the cap hit.
+            await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
+            if not all_ok:
+                logger.error(
+                    "telegram_partial chain=%s token=%s source=%s; cooldown released",
+                    cand.chain,
+                    cand.address,
+                    cand.source_key,
+                )
+
+        if not all_ok:
+            if exec_result.status != "blocked_max_positions":
+                logger.error(
+                    "telegram_partial chain=%s token=%s source=%s; cooldown kept",
+                    cand.chain,
+                    cand.address,
+                    cand.source_key,
+                )
+
+        self._spawn_news_update(cand, exec_result, latency_sec=latency_sec, message_ids=sent_message_ids)
 
         await self.db.insert_alert(
             cand.chain, cand.address, cand.source_key, json.dumps(text_payload)
@@ -462,6 +546,83 @@ class ChainPipeline:
             reason,
             cand.dual_source,
         )
+
+    def _spawn_news_update(
+        self,
+        cand: TokenCandidate,
+        paper: Any,
+        *,
+        latency_sec: float | None,
+        message_ids: list[tuple[int, int]],
+    ) -> None:
+        if not message_ids:
+            return
+        if self.news_poller is None:
+            return
+        news_cfg = self.app_cfg.global_.news
+        if news_cfg is None or not news_cfg.enabled:
+            return
+        if news_cfg.edit_timeout_ms <= 0:
+            return
+        task = asyncio.create_task(
+            self._append_news_line(
+                cand,
+                paper,
+                latency_sec=latency_sec,
+                message_ids=message_ids,
+                timeout_ms=news_cfg.edit_timeout_ms,
+            ),
+            name=f"{self.chain}-news-{cand.address}",
+        )
+
+        self._tasks.append(task)
+
+        def _cleanup(done_task: asyncio.Task[None]) -> None:
+            if done_task in self._tasks:
+                self._tasks.remove(done_task)
+
+        task.add_done_callback(_cleanup)
+
+    async def _append_news_line(
+        self,
+        cand: TokenCandidate,
+        paper: Any,
+        *,
+        latency_sec: float | None,
+        message_ids: list[tuple[int, int]],
+        timeout_ms: int,
+    ) -> None:
+        try:
+            news_line = await asyncio.wait_for(
+                self.news_poller.match_news(cand),
+                timeout=timeout_ms / 1000,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("news_lookup_timeout chain=%s token=%s", cand.chain, cand.address)
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("news_lookup_failed chain=%s token=%s err=%s", cand.chain, cand.address, exc)
+            return
+
+        if not news_line:
+            return
+
+        try:
+            ok, all_ok = await self.notifier.edit_candidate_with_news(
+                cand,
+                paper=paper,
+                latency_sec=latency_sec,
+                message_ids=message_ids,
+                news_line=news_line,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("news_edit_failed chain=%s token=%s", cand.chain, cand.address)
+            return
+        if not ok:
+            logger.error("news_edit_all_failed chain=%s token=%s", cand.chain, cand.address)
+            return
+        if not all_ok:
+            logger.warning("news_edit_partial chain=%s token=%s", cand.chain, cand.address)
 
 
 def dig_addr(raw: dict[str, Any]) -> str | None:

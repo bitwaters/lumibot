@@ -5,6 +5,7 @@ from lumibot.exec_types import ExecResult, PaperTradeEvent
 from lumibot.models import NormalizedSafety, Source, TokenCandidate
 from lumibot.telegram_bot import BOT_COMMANDS
 from lumibot.telegram_notify import (
+    append_news_line,
     gmgn_keyboard,
     gmgn_link,
     reject_reason_label,
@@ -79,6 +80,82 @@ def test_skipped_open_brief():
     assert "📡 [SOL] 信号推送" in text
     assert "⏭ 未新开（已有仓）" in text
     assert "热门趋势" not in text
+
+
+def test_precheck_skipped_open_brief():
+    cand = TokenCandidate(
+        chain="sol",
+        address="Addr",
+        source=Source.TRENDING,
+        symbol="X",
+        market_cap=50_000,
+        liquidity=10_000,
+        top10_rate=0.1,
+        holder_count=100,
+        visiting_count=80,
+    )
+    text = render_card(cand, paper=ExecResult(status="opening"), paper_status="precheck_skipped_open")
+    assert "↪️ 未新开" in text
+
+
+def test_append_news_line_freeze_insert():
+    cand = TokenCandidate(
+        chain="sol",
+        address="SoLAddr123FullContractAddress",
+        source=Source.SIGNAL,
+        symbol="PEPE",
+        price=0.00123,
+        market_cap=125_000,
+        liquidity=18_000,
+        top10_rate=0.22,
+        holder_count=320,
+        visiting_count=210,
+    )
+    base = render_card(cand, paper=ExecResult(status="opened", notional_usd=20, open_mark=0.00123), latency_sec=1.8)
+    news_line = "📰 相关 token-specific update"
+    enriched = append_news_line(base, news_line)
+    assert enriched.startswith(base.rstrip("\n"))
+    assert enriched.splitlines()[-1] == news_line
+    assert sum(1 for line in enriched.splitlines() if line.startswith("📰")) == 1
+    for key in ("💰 市值", "💧 流动性", "⏱ 延迟", "✅ 已开仓"):
+        assert key in enriched
+
+
+def test_append_news_line_replaces_existing_news_line():
+    cand = TokenCandidate(
+        chain="sol",
+        address="Addr",
+        source=Source.TRENDING,
+        symbol="X",
+        market_cap=50_000,
+        liquidity=10_000,
+        top10_rate=0.1,
+        holder_count=100,
+        visiting_count=80,
+    )
+    base = render_card(cand, paper=ExecResult(status="opening"), paper_status="opening")
+    first = append_news_line(base, "📰 相关 first hit")
+    second = append_news_line(first, "📰 市场 market-wide update")
+    lines = second.splitlines()
+    assert sum(1 for line in lines if line.startswith("📰")) == 1
+    assert lines[-1] == "📰 市场 market-wide update"
+
+
+def test_append_news_line_none_returns_original():
+    cand = TokenCandidate(
+        chain="sol",
+        address="Addr",
+        source=Source.TRENDING,
+        symbol="X",
+        market_cap=50_000,
+        liquidity=10_000,
+        top10_rate=0.1,
+        holder_count=100,
+        visiting_count=80,
+    )
+    base = render_card(cand, paper=ExecResult(status="opening"), paper_status="opening")
+    assert append_news_line(base, None) == base
+    assert append_news_line(base, "") == base
 
 
 def test_paper_close_event_card():
@@ -367,4 +444,3 @@ def test_help_omits_reset_when_requested():
     assert "/reset_paper <sol|bsc|robinhood|all> confirm" not in no_reset
     assert "命令：/positions" in no_reset
     assert "/reset_paper" not in no_reset.splitlines()[3]
-

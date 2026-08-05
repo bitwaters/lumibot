@@ -96,6 +96,7 @@ REASON_LABELS = {
     "safety_open_source": "安全·未开源",
     "safety_open_source_missing": "安全·开源缺失",
     "safety_tax": "安全·税",
+    "executor_error": "执行异常",
     "filter": "筛选",
 }
 
@@ -153,6 +154,7 @@ def render_card(
     paper: ExecResult | None = None,
     *,
     latency_sec: float | None = None,
+    paper_status: str | None = None,
 ) -> str:
     """Unified signal-push card (plain text)."""
     sym = cand.symbol or "未知"
@@ -172,8 +174,16 @@ def render_card(
         _safety_line(cand),
         "",
         f"⏱ 延迟 {format_latency(latency_sec)}",
-        _paper_line(paper),
+        _paper_line(paper, paper_status=paper_status),
     ]
+    return "\n".join(lines)
+
+
+def append_news_line(card: str, news_line: str | None) -> str:
+    if not news_line:
+        return card
+    lines = [line for line in card.splitlines() if not line.startswith("📰")]
+    lines.append(news_line)
     return "\n".join(lines)
 
 
@@ -575,7 +585,13 @@ def _safety_line(cand: TokenCandidate) -> str:
     return "  ·  ".join(parts)
 
 
-def _paper_line(paper: ExecResult | None) -> str:
+def _paper_line(paper: ExecResult | None, *, paper_status: str | None = None) -> str:
+    if paper_status == "opening":
+        return "⏳ 开仓中"
+    if paper_status == "precheck_skipped_open":
+        return "↪️ 未新开"
+    if paper_status == "executor_error":
+        return "⛔ 执行异常"
     if paper is None:
         return "—"
     if paper.status == "opened":
@@ -652,16 +668,46 @@ class TelegramNotifier:
         *,
         reply_markup: InlineKeyboardMarkup | None = None,
         disable_preview: bool = True,
-    ) -> tuple[bool, bool]:
+    ) -> tuple[bool, bool, list[tuple[int, int]]]:
         if not self.chat_ids:
+            return False, False, []
+        ok = 0
+        fail = 0
+        message_ids: list[tuple[int, int]] = []
+        for chat_id in self.chat_ids:
+            try:
+                msg = await self._bot.send_message(
+                    chat_id,
+                    text,
+                    disable_web_page_preview=disable_preview,
+                    parse_mode=None,
+                    reply_markup=reply_markup,
+                )
+                message_ids.append((chat_id, msg.message_id))
+                ok += 1
+            except Exception:  # noqa: BLE001
+                fail += 1
+                logger.exception("telegram send failed chat_id=%s", chat_id)
+        return ok > 0, fail == 0, message_ids
+
+    async def edit_text(
+        self,
+        text: str,
+        message_ids: list[tuple[int, int]],
+        *,
+        reply_markup: InlineKeyboardMarkup | None = None,
+        disable_preview: bool = True,
+    ) -> tuple[bool, bool]:
+        if not message_ids:
             return False, False
         ok = 0
         fail = 0
-        for chat_id in self.chat_ids:
+        for chat_id, message_id in message_ids:
             try:
-                await self._bot.send_message(
-                    chat_id,
-                    text,
+                await self._bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=text,
                     disable_web_page_preview=disable_preview,
                     parse_mode=None,
                     reply_markup=reply_markup,
@@ -669,7 +715,7 @@ class TelegramNotifier:
                 ok += 1
             except Exception:  # noqa: BLE001
                 fail += 1
-                logger.exception("telegram send failed chat_id=%s", chat_id)
+                logger.exception("telegram edit failed chat_id=%s message_id=%s", chat_id, message_id)
         return ok > 0, fail == 0
 
     async def send_candidate(
@@ -678,16 +724,59 @@ class TelegramNotifier:
         paper: ExecResult | None = None,
         *,
         latency_sec: float | None = None,
-    ) -> tuple[bool, bool]:
+        paper_status: str | None = None,
+    ) -> tuple[bool, bool, list[tuple[int, int]]]:
         return await self.send_text(
-            render_card(cand, paper=paper, latency_sec=latency_sec),
+            render_card(cand, paper=paper, latency_sec=latency_sec, paper_status=paper_status),
+            reply_markup=gmgn_keyboard(cand.chain, cand.address),
+            disable_preview=True,
+        )
+
+    async def edit_candidate(
+        self,
+        cand: TokenCandidate,
+        paper: ExecResult | None = None,
+        *,
+        latency_sec: float | None = None,
+        paper_status: str | None = None,
+        message_ids: list[tuple[int, int]],
+    ) -> tuple[bool, bool]:
+        return await self.edit_text(
+            render_card(cand, paper=paper, latency_sec=latency_sec, paper_status=paper_status),
+            message_ids,
+            reply_markup=gmgn_keyboard(cand.chain, cand.address),
+            disable_preview=True,
+        )
+
+    async def edit_candidate_with_news(
+        self,
+        cand: TokenCandidate,
+        paper: ExecResult | None = None,
+        *,
+        latency_sec: float | None = None,
+        paper_status: str | None = None,
+        message_ids: list[tuple[int, int]],
+        news_line: str | None = None,
+    ) -> tuple[bool, bool]:
+        return await self.edit_text(
+            append_news_line(
+                render_card(
+                    cand,
+                    paper=paper,
+                    latency_sec=latency_sec,
+                    paper_status=paper_status,
+                ),
+                news_line,
+            ),
+            message_ids,
             reply_markup=gmgn_keyboard(cand.chain, cand.address),
             disable_preview=True,
         )
 
     async def send_paper_event(self, ev: PaperTradeEvent) -> tuple[bool, bool]:
-        return await self.send_text(
+        ok, all_ok, _ = await self.send_text(
             render_paper_event(ev),
             reply_markup=gmgn_keyboard(ev.chain, ev.token),
             disable_preview=True,
         )
+        return ok, all_ok

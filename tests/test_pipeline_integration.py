@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 from unittest.mock import AsyncMock
@@ -9,6 +10,7 @@ import pytest
 from lumibot.config import load_app_config
 from lumibot.db import Database
 from lumibot.executors import PaperExecutor
+from lumibot.exec_types import ExecResult
 from lumibot.models import Source, TokenCandidate
 from lumibot.pipeline import ChainPipeline
 from lumibot.strategy import StrategyOrder
@@ -63,21 +65,102 @@ class FakeNotifier:
         self.paper_status: list[str] = []
         self.cards: list[str] = []
         self.events: list[Any] = []
+        self.edited: list[Any] = []
+        self.news_lines: list[str | None] = []
+        self.calls: list[str] = []
 
-    async def send_candidate(self, cand, paper=None, *, latency_sec=None) -> tuple[bool, bool]:
+    async def send_candidate(
+        self,
+        cand,
+        paper=None,
+        *,
+        latency_sec=None,
+        paper_status: str | None = None,
+    ) -> tuple[bool, bool, list[tuple[int, int]]]:
+        self.calls.append("send")
         if self.ok:
             self.sent.append(cand)
-            if paper is not None:
+            if paper_status is not None:
+                self.paper_status.append(paper_status)
+            elif paper is not None:
                 self.paper_status.append(paper.status)
             from lumibot.telegram_notify import render_card
 
-            self.cards.append(render_card(cand, paper=paper, latency_sec=latency_sec))
-            return True, True
-        return False, False
+            self.cards.append(
+                render_card(cand, paper=paper, latency_sec=latency_sec, paper_status=paper_status)
+            )
+            message_id = len(self.sent)
+            return True, True, [(1, message_id)]
+        return False, False, []
+
+    async def edit_candidate(
+        self,
+        cand,
+        paper=None,
+        *,
+        latency_sec=None,
+        message_ids: list[tuple[int, int]] | None = None,
+        paper_status: str | None = None,
+    ) -> tuple[bool, bool]:
+        self.calls.append("edit")
+        if not self.ok:
+            return False, False
+        if paper_status is not None:
+            self.paper_status.append(paper_status)
+        elif paper is not None:
+            self.paper_status.append(paper.status)
+        self.edited.append(cand)
+        from lumibot.telegram_notify import render_card
+
+        self.cards.append(
+            render_card(cand, paper=paper, latency_sec=latency_sec, paper_status=paper_status)
+        )
+        return True, True
+
+    async def edit_candidate_with_news(
+        self,
+        cand,
+        paper=None,
+        *,
+        latency_sec=None,
+        message_ids: list[tuple[int, int]] | None = None,
+        news_line: str | None = None,
+        paper_status: str | None = None,
+    ) -> tuple[bool, bool]:
+        self.calls.append("edit_news")
+        self.news_lines.append(news_line)
+        return await self.edit_candidate(
+            cand,
+            paper,
+            latency_sec=latency_sec,
+            message_ids=message_ids,
+            paper_status=paper_status,
+        )
 
     async def send_paper_event(self, ev) -> tuple[bool, bool]:
         self.events.append(ev)
         return True, True
+
+
+class FakeNewsPoller:
+    def __init__(self, news_line: str | None) -> None:
+        self.news_line = news_line
+        self.calls: list[str] = []
+
+    async def match_news(self, cand) -> str | None:  # noqa: ANN001
+        self.calls.append(cand.address)
+        await asyncio.sleep(0)
+        return self.news_line
+
+
+class FakeNoopNewsPoller:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def match_news(self, cand) -> str | None:  # noqa: ANN001
+        self.calls.append(cand.address)
+        await asyncio.sleep(0)
+        return "📰 should-not-run"
 
 
 def _sol_cfg():
@@ -102,6 +185,20 @@ def _pass_security_sol() -> dict[str, Any]:
         "is_honeypot": False,
         "renounced_mint": True,
         "renounced_freeze_account": True,
+        "rug_ratio": 0.1,
+        "bundler_rate": 0.1,
+        "rat_trader_amount_rate": 0.1,
+        "is_wash_trading": False,
+    }
+
+
+def _pass_security_evm() -> dict[str, Any]:
+    return {
+        "is_honeypot": False,
+        "is_renounced": True,
+        "is_open_source": True,
+        "buy_tax": 0.0,
+        "sell_tax": 0.0,
         "rug_ratio": 0.1,
         "bundler_rate": 0.1,
         "rat_trader_amount_rate": 0.1,
@@ -188,7 +285,7 @@ async def test_happy_path_alerts_and_opens_paper(harness):
     )
     assert len(notifier.sent) == 1
     assert notifier.sent[0].chain_tag == "SOL"
-    assert notifier.paper_status == ["opened"]
+    assert notifier.paper_status == ["opening", "opened"]
     row = await db.get_open_paper("sol", "good")
     assert row is not None
     assert abs(float(row["open_mark"]) - 2.5) < 1e-9
@@ -198,7 +295,9 @@ async def test_happy_path_alerts_and_opens_paper(harness):
     assert notifier.cards
     card = notifier.cards[0]
     assert "📡 [SOL] 信号推送" in card
-    assert "✅ 已开仓" in card
+    assert "⏳ 开仓中" in card
+    edited_card = notifier.cards[-1]
+    assert "✅ 已开仓" in edited_card
     assert "$45.0K" in card  # fresh quote MC on card, not gate snapshot
     cur = await db.conn.execute("SELECT payload_json FROM alerts ORDER BY id DESC LIMIT 1")
     alert = await cur.fetchone()
@@ -241,7 +340,7 @@ async def test_push_card_uses_fresh_snapshot_not_gate_metrics(harness):
             "price": 1.0,
         }
     )
-    assert notifier.paper_status == ["opened"]
+    assert notifier.paper_status == ["opening", "opened"]
     card = notifier.cards[0]
     assert "$45.0K" in card
     assert "$55.0K" in card
@@ -273,7 +372,7 @@ async def test_fresh_quote_mc_outside_filter_still_opens(harness):
             "holder_count": 200,
         }
     )
-    assert notifier.paper_status == ["opened"]
+    assert notifier.paper_status == ["opening", "opened"]
     assert await db.get_open_paper("sol", "wide") is not None
     assert "$50.00M" in notifier.cards[0]
 
@@ -372,7 +471,7 @@ async def test_paper_skip_second_open_still_alerts(harness):
     assert len(opens) == 1
     summary = await db.paper_stats_summary()
     assert summary["opened_count"] == 1
-    assert summary["skipped_open_count"] == 1
+    assert summary["skipped_open_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -434,7 +533,7 @@ async def test_fresh_quote_without_mc_clears_card_mc(harness):
             "holder_count": 200,
         }
     )
-    assert notifier.paper_status == ["opened"]
+    assert notifier.paper_status == ["opening", "opened"]
     assert await db.get_open_paper("sol", "nomc") is not None
     assert "💰 市值 —" in notifier.cards[0]
     assert "$100.0K" not in notifier.cards[0]
@@ -575,10 +674,271 @@ async def test_blocked_max_race_releases_cooldown(harness):
             "holder_count": 200,
         }
     )
-    assert notifier.paper_status == ["blocked_max_positions"]
+    assert notifier.paper_status == ["opening", "blocked_max_positions"]
     assert (
         await db.check_cooldown("sol", "race", "signal:12", 45, 15)
     ) is None
+
+
+@pytest.mark.asyncio
+async def test_push_then_open_order_is_preserved(harness):
+    pipe, client, notifier, db, _app = harness
+    events: list[str] = []
+
+    async def on_alert(_cand: TokenCandidate) -> ExecResult:
+        events.append("on_alert")
+        assert notifier.calls == ["send"]
+        return ExecResult(status="opened")
+
+    pipe.executor.on_alert = on_alert
+    client.info["ord"] = _pass_info()
+    client.security["ord"] = _pass_security_sol()
+    await pipe._handle_signal(
+        {
+            "address": "ord",
+            "signal_type": 12,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+        }
+    )
+    assert events == ["on_alert"]
+    assert notifier.calls[0] == "send"
+    assert "edit" in notifier.calls
+    row = await db.get_open_paper("sol", "ord")
+    # on_alert is mocked, so this path only validates sequencing.
+    assert row is None
+
+
+@pytest.mark.asyncio
+async def test_executor_error_releases_cooldown_and_rejects(harness):
+    pipe, client, notifier, db, _app = harness
+
+    async def boom(_cand: TokenCandidate) -> ExecResult:
+        raise RuntimeError("executor boom")
+
+    pipe.executor.on_alert = boom
+    client.info["boom"] = _pass_info()
+    client.security["boom"] = _pass_security_sol()
+    await pipe._handle_signal(
+        {
+            "address": "boom",
+            "signal_type": 12,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+        }
+    )
+    assert notifier.calls == ["send", "edit"]
+    assert notifier.paper_status == ["opening", "executor_error"]
+    assert await db.get_open_paper("sol", "boom") is None
+    assert (
+        await db.check_cooldown("sol", "boom", "signal:12", 45, 15)
+    ) is None
+    rows = await db.top_reject_reasons(10)
+    assert any(
+        row["reason"] == "executor_error" and row["source"] == "signal" and row["count"] >= 1
+        for row in rows
+    )
+
+
+@pytest.mark.asyncio
+async def test_bsc_chainpipeline_smoke_signal_path(tmp_path):
+    app = _sol_cfg()
+    db = Database(str(tmp_path / "t.db"))
+    await db.connect()
+    client = FakeClient()
+    notifier = FakeNotifier()
+    pipe = ChainPipeline(
+        "bsc",
+        app.chains["bsc"],
+        app,
+        client,
+        db,
+        notifier,
+    )
+
+    client.info["bsc"] = _pass_info()
+    client.security["bsc"] = _pass_security_evm()
+    client.prices["bsc"] = 1.2
+    await pipe._handle_signal(
+        {
+            "address": "bsc",
+            "signal_type": 12,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+            "symbol": "TEST",
+            "name": "BSC",
+        }
+    )
+    assert notifier.calls[0] == "send"
+    assert await db.get_open_paper("bsc", "bsc") is not None
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_rh_chainpipeline_smoke_signal_path(tmp_path):
+    app = _sol_cfg()
+    db = Database(str(tmp_path / "t.db"))
+    await db.connect()
+    client = FakeClient()
+    notifier = FakeNotifier()
+    pipe = ChainPipeline(
+        "robinhood",
+        app.chains["robinhood"],
+        app,
+        client,
+        db,
+        notifier,
+    )
+
+    client.info["rh"] = _pass_info()
+    client.security["rh"] = _pass_security_evm()
+    client.prices["rh"] = 1.4
+    await pipe._handle_signal(
+        {
+            "address": "rh",
+            "signal_type": 12,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+            "symbol": "TEST",
+            "name": "RH",
+        }
+    )
+    assert notifier.calls[0] == "send"
+    assert await db.get_open_paper("robinhood", "rh") is not None
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_news_line_edit_fires_when_config_enabled(tmp_path):
+    app = _sol_cfg()
+    app.global_.news.enabled = True
+    db = Database(str(tmp_path / "t.db"))
+    await db.connect()
+    client = FakeClient()
+    notifier = FakeNotifier()
+    news_poller = FakeNewsPoller("📰 相关 token hit")
+    pipe = ChainPipeline(
+        "sol",
+        app.chains["sol"],
+        app,
+        client,
+        db,
+        notifier,
+        news_poller=news_poller,
+    )
+
+    client.info["news"] = _pass_info()
+    client.security["news"] = _pass_security_sol()
+    client.prices["news"] = 1.0
+    await pipe._handle_signal(
+        {
+            "address": "news",
+            "signal_type": 12,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+        }
+    )
+    await asyncio.sleep(0)
+    assert notifier.calls.count("edit_news") == 1
+    assert notifier.news_lines == ["📰 相关 token hit"]
+    assert news_poller.calls == ["news"]
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_open_check_prevents_open_and_sends_skipped_status(harness):
+    pipe, client, notifier, db, app = harness
+    client.info["hold1"] = _pass_info()
+    client.security["hold1"] = _pass_security_sol()
+    # Seed an existing open to make precheck trigger.
+    await db.try_open_paper(
+        "sol",
+        "hold1",
+        1.0,
+        20.0,
+        20.0,
+        peak_price=1.0,
+        open_mark=1.0,
+        symbol="SOL",
+        max_concurrent=0,
+    )
+
+    await pipe._handle_signal(
+        {
+            "address": "hold1",
+            "signal_type": 12,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+        }
+    )
+
+    assert notifier.calls == ["send"]
+    assert notifier.paper_status == ["precheck_skipped_open"]
+    # Since precheck short-circuits before open, it never calls on_alert/新闻编辑 path.
+    assert notifier.edited == []
+    assert notifier.news_lines == []
+
+    # No second open created.
+    opens = await db.list_open_papers("sol")
+    assert len(opens) == 1
+
+
+@pytest.mark.asyncio
+async def test_news_line_edit_skipped_when_config_disabled(tmp_path):
+    app = _sol_cfg()
+    app.global_.news.enabled = False
+    db = Database(str(tmp_path / "t.db"))
+    await db.connect()
+    client = FakeClient()
+    notifier = FakeNotifier()
+    news_poller = FakeNoopNewsPoller()
+    pipe = ChainPipeline(
+        "sol",
+        app.chains["sol"],
+        app,
+        client,
+        db,
+        notifier,
+        news_poller=news_poller,
+    )
+
+    client.info["news2"] = _pass_info()
+    client.security["news2"] = _pass_security_sol()
+    client.prices["news2"] = 1.0
+    await pipe._handle_signal(
+        {
+            "address": "news2",
+            "signal_type": 12,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+        }
+    )
+    await asyncio.sleep(0)
+    assert notifier.calls.count("edit_news") == 0
+    assert notifier.news_lines == []
+    assert news_poller.calls == []
+    await db.close()
 
 
 @pytest.mark.asyncio

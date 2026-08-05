@@ -6,6 +6,7 @@ import signal
 import sys
 
 from lumibot.config import Settings, enabled_chains, load_app_config
+from lumibot.news import NewsPoller, OpenNewsClient
 from lumibot.db import Database
 from lumibot.gmgn.client import GmgnClient, RateLimiter
 from lumibot.ipv4 import probe_ipv4_or_raise
@@ -57,6 +58,17 @@ async def run() -> None:
         cache_ttl_sec=app_cfg.global_.enrichment_cache_ttl_sec,
         security_cache_ttl_sec=app_cfg.global_.security_cache_ttl_sec,
     )
+    news_poller: NewsPoller | None = None
+    news_cfg = app_cfg.global_.news
+    if news_cfg and news_cfg.enabled:
+        if settings.opennews_token:
+            news_client = OpenNewsClient(settings.opennews_token)
+            news_poller = NewsPoller(news_client, news_cfg)
+            await news_poller.start()
+            logger.info("opennews poller started")
+        else:
+            logger.warning("global.news enabled but OPENNEWS_TOKEN is missing; news enrichment disabled")
+
     notifier = TelegramNotifier(settings.telegram_bot_token, push_chat_ids)
     logger.info(
         "telegram destinations control=%s push=%s (groups=%s)",
@@ -66,7 +78,16 @@ async def run() -> None:
     )
 
     pipelines = [
-        ChainPipeline(name, cfg, app_cfg, client, db, notifier) for name, cfg in chains.items()
+        ChainPipeline(
+            name,
+            cfg,
+            app_cfg,
+            client,
+            db,
+            notifier,
+            news_poller=news_poller,
+        )
+        for name, cfg in chains.items()
     ]
     for p in pipelines:
         p.start()
@@ -105,6 +126,8 @@ async def run() -> None:
     await asyncio.gather(polling_task, return_exceptions=True)
     for p in pipelines:
         await p.stop()
+    if news_poller is not None:
+        await news_poller.stop()
     await notifier.close()
     await client.aclose()
     await db.close()

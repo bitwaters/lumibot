@@ -6,6 +6,16 @@ global:
   enrichment_cache_ttl_sec: 300
   security_cache_ttl_sec: 3600
   price_source: token_info  # token_info | kline
+  news:
+    enabled: false
+    poll_sec: 60
+    lookback_min: 120
+    min_score: 0.6
+    edit_timeout_ms: 3000
+    min_symbol_len: 3
+    symbol_blocklist: []
+    market_coins: [SOL, ETH, BTC]
+    market_keywords: [meme, meme coin, pump, launch]
 
 # NOTE: strategy is defined per-chain below (chains.<name>.strategy). There is no
 # top-level strategy anymore — each chain's exit/notional behaviour is fully
