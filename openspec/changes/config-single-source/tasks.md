@@ -17,4 +17,4 @@
 ## 3. 文档与校验
 
 - [x] 3.1 `docs/runtime-params.md`：补 3 键说明；「manage 循环间隔硬编码 5s」注记更新为配置化
-- [ ] 3.2 `openspec validate` 通过；部署后 `/status` 正常验证无行为变化
+- [x] 3.2 `openspec validate` 通过；部署后 `/status` 正常验证无行为变化

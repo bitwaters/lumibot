@@ -15,7 +15,7 @@
 
 ## 3. 部署
 
-- [ ] 3.1 提交推送 + `./scripts/deploy_remote.sh`；确认启动无错误
+- [x] 3.1 提交推送 + `./scripts/deploy_remote.sh`；确认启动无错误
 
 ## 4. Spike 与阈值校准
 

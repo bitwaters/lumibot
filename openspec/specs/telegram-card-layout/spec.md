@@ -15,7 +15,7 @@ All reply cards MUST be sent with `parse_mode="HTML"`. External data (token symb
 - **THEN** numeric values, PnL, and section titles are bold while labels remain regular weight
 
 ### Requirement: Signal push card structure
-The signal push card MUST use the structure: title line, CA block line, `📊 指标` section header, metric rows, `🛡` safety line, status line, optional `📰` news line, and inline buttons. The title MUST lead with the token symbol (`📡 $SYM · CHAIN`), with a `· 双源` badge appended only when the candidate is dual-source. The full contract address MUST appear on its own line as a `📍 CA:` label followed by a monospace code block, so operators can select and copy it by long-press; a copy button MUST NOT be added. Missing metrics MUST render as `—` and MUST NOT block the card.
+The signal push card MUST use the structure: title line, CA block line, `📊 指标` section header, metric rows, `🛡` safety line, status line, optional `📚` narrative line (was: `📰` news line; OpenNews/6551 feature removed, replaced by LLM narrative labels), and inline buttons. The title MUST lead with the token symbol (`📡 $SYM · CHAIN`), with a `· 双源` badge appended only when the candidate is dual-source. The full contract address MUST appear on its own line as a `📍 CA:` label followed by a monospace code block, so operators can select and copy it by long-press; a copy button MUST NOT be added. Missing metrics MUST render as `—` and MUST NOT block the card.
 
 #### Scenario: Opened push card shape
 - **WHEN** a candidate is admitted and paper status is opened
@@ -25,12 +25,12 @@ The signal push card MUST use the structure: title line, CA block line, `📊 �
 - **WHEN** the source is signal and trigger_mc is available
 - **THEN** the market cap row shows the trigger reference, e.g. `💰 市值 $125K → 触发 $100K (+25%)`; otherwise the row shows only the current market cap
 
-#### Scenario: News line position
-- **WHEN** an async news edit appends a news line
-- **THEN** the `📰` line is the last text line of the card (after the status line, before the buttons), and a later news edit replaces the previous `📰` line
+#### Scenario: Narrative line position
+- **WHEN** an async narrative edit appends a narrative line
+- **THEN** the `📚` line is the last text line of the card (after the status line, before the buttons), and a later narrative edit replaces the previous `📚` line
 
-#### Scenario: News content escaped
-- **WHEN** a news line contains HTML metacharacters from an external source
+#### Scenario: Narrative content escaped
+- **WHEN** a narrative line contains HTML metacharacters from the LLM output
 - **THEN** it is escaped before insertion and renders as literal text
 
 #### Scenario: Status line with latency for every state
@@ -49,7 +49,7 @@ The signal card MUST display these metrics with the specified Chinese labels and
 - **THEN** the card falls back to price lines labeled `入场价`/`现价`/`峰值` and uses `投入` for the deployed amount
 
 ### Requirement: Inline buttons per chain
-The signal and paper-event cards MUST include a GMGN button for every chain. A DexScreener button MUST be included for sol and bsc chains and MUST NOT be included for chains without DexScreener support (e.g. robinhood). A copy button MUST NOT be added; CA copying relies on the code block text selection.
+The signal and paper-event cards MUST include a GMGN button for every chain and a DexScreener button for every chain where DexScreener support exists (sol, bsc, robinhood — was: robinhood MUST NOT include DexScreener; the button set was unified across chains). A copy button MUST NOT be added; CA copying relies on the code block text selection.
 
 #### Scenario: SOL card buttons
 - **WHEN** a card is rendered for a sol token
@@ -57,7 +57,7 @@ The signal and paper-event cards MUST include a GMGN button for every chain. A D
 
 #### Scenario: Robinhood card buttons
 - **WHEN** a card is rendered for a robinhood token
-- **THEN** the inline keyboard shows only the GMGN button
+- **THEN** the inline keyboard shows both GMGN and DexScreener buttons (uniform with sol/bsc)
 
 ### Requirement: Paper event card structure
 Paper exit/stage1 notifications MUST share the signal card's visual language: title with the close icon, symbol, chain tag, reason, and a bold PnL; a `📍 CA:` code block; metric lines with bold values; and the per-chain button group. The cost line after a stage1 partial sell MUST depend on the sell mode: notional mode shows `已回本 · 剩余仓位零成本`, ratio mode shows `剩余仓位成本按减仓价计算`.
