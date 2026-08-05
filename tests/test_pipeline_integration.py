@@ -66,7 +66,6 @@ class FakeNotifier:
         self.cards: list[str] = []
         self.events: list[Any] = []
         self.edited: list[Any] = []
-        self.news_lines: list[str | None] = []
         self.calls: list[str] = []
 
     async def send_candidate(
@@ -117,50 +116,9 @@ class FakeNotifier:
         )
         return True, True
 
-    async def edit_candidate_with_news(
-        self,
-        cand,
-        paper=None,
-        *,
-        latency_sec=None,
-        message_ids: list[tuple[int, int]] | None = None,
-        news_line: str | None = None,
-        paper_status: str | None = None,
-    ) -> tuple[bool, bool]:
-        self.calls.append("edit_news")
-        self.news_lines.append(news_line)
-        return await self.edit_candidate(
-            cand,
-            paper,
-            latency_sec=latency_sec,
-            message_ids=message_ids,
-            paper_status=paper_status,
-        )
-
     async def send_paper_event(self, ev) -> tuple[bool, bool]:
         self.events.append(ev)
         return True, True
-
-
-class FakeNewsPoller:
-    def __init__(self, news_line: str | None) -> None:
-        self.news_line = news_line
-        self.calls: list[str] = []
-
-    async def match_news(self, cand) -> str | None:  # noqa: ANN001
-        self.calls.append(cand.address)
-        await asyncio.sleep(0)
-        return self.news_line
-
-
-class FakeNoopNewsPoller:
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-
-    async def match_news(self, cand) -> str | None:  # noqa: ANN001
-        self.calls.append(cand.address)
-        await asyncio.sleep(0)
-        return "📰 should-not-run"
 
 
 def _sol_cfg():
@@ -821,46 +779,6 @@ async def test_rh_chainpipeline_smoke_signal_path(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_news_line_edit_fires_when_config_enabled(tmp_path):
-    app = _sol_cfg()
-    app.global_.news.enabled = True
-    db = Database(str(tmp_path / "t.db"))
-    await db.connect()
-    client = FakeClient()
-    notifier = FakeNotifier()
-    news_poller = FakeNewsPoller("📰 相关 token hit")
-    pipe = ChainPipeline(
-        "sol",
-        app.chains["sol"],
-        app,
-        client,
-        db,
-        notifier,
-        news_poller=news_poller,
-    )
-
-    client.info["news"] = _pass_info()
-    client.security["news"] = _pass_security_sol()
-    client.prices["news"] = 1.0
-    await pipe._handle_signal(
-        {
-            "address": "news",
-            "signal_type": 12,
-            "market_cap": 40_000,
-            "trigger_mc": 40_000,
-            "liquidity": 20_000,
-            "top10_rate": 0.2,
-            "holder_count": 200,
-        }
-    )
-    await asyncio.sleep(0)
-    assert notifier.calls.count("edit_news") == 1
-    assert notifier.news_lines == ["📰 相关 token hit"]
-    assert news_poller.calls == ["news"]
-    await db.close()
-
-
-@pytest.mark.asyncio
 async def test_open_check_prevents_open_and_sends_skipped_status(harness):
     pipe, client, notifier, db, app = harness
     client.info["hold1"] = _pass_info()
@@ -892,53 +810,12 @@ async def test_open_check_prevents_open_and_sends_skipped_status(harness):
 
     assert notifier.calls == ["send"]
     assert notifier.paper_status == ["precheck_skipped_open"]
-    # Since precheck short-circuits before open, it never calls on_alert/新闻编辑 path.
+    # Since precheck short-circuits before open, it never calls on_alert/状态编辑 path.
     assert notifier.edited == []
-    assert notifier.news_lines == []
 
     # No second open created.
     opens = await db.list_open_papers("sol")
     assert len(opens) == 1
-
-
-@pytest.mark.asyncio
-async def test_news_line_edit_skipped_when_config_disabled(tmp_path):
-    app = _sol_cfg()
-    app.global_.news.enabled = False
-    db = Database(str(tmp_path / "t.db"))
-    await db.connect()
-    client = FakeClient()
-    notifier = FakeNotifier()
-    news_poller = FakeNoopNewsPoller()
-    pipe = ChainPipeline(
-        "sol",
-        app.chains["sol"],
-        app,
-        client,
-        db,
-        notifier,
-        news_poller=news_poller,
-    )
-
-    client.info["news2"] = _pass_info()
-    client.security["news2"] = _pass_security_sol()
-    client.prices["news2"] = 1.0
-    await pipe._handle_signal(
-        {
-            "address": "news2",
-            "signal_type": 12,
-            "market_cap": 40_000,
-            "trigger_mc": 40_000,
-            "liquidity": 20_000,
-            "top10_rate": 0.2,
-            "holder_count": 200,
-        }
-    )
-    await asyncio.sleep(0)
-    assert notifier.calls.count("edit_news") == 0
-    assert notifier.news_lines == []
-    assert news_poller.calls == []
-    await db.close()
 
 
 @pytest.mark.asyncio

@@ -24,7 +24,6 @@ from lumibot.filters import (
 from lumibot.gmgn.client import GmgnClient
 from lumibot.models import Source, TokenCandidate
 from lumibot.safety import evaluate_safety, normalize_security
-from lumibot.news import NewsPoller
 from lumibot.telegram_notify import TelegramNotifier
 
 logger = logging.getLogger(__name__)
@@ -39,7 +38,6 @@ class ChainPipeline:
         client: GmgnClient,
         db: Database,
         notifier: TelegramNotifier,
-        news_poller: NewsPoller | None = None,
     ) -> None:
         self.chain = chain
         self.cfg = chain_cfg
@@ -47,7 +45,6 @@ class ChainPipeline:
         self.client = client
         self.db = db
         self.notifier = notifier
-        self.news_poller = news_poller
         self._tasks: list[asyncio.Task] = []
         self._stop = asyncio.Event()
         # Recent source sightings for dual-source (signal↔trending) within TTL.
@@ -520,8 +517,6 @@ class ChainPipeline:
                     cand.source_key,
                 )
 
-        self._spawn_news_update(cand, exec_result, latency_sec=latency_sec, message_ids=sent_message_ids)
-
         await self.db.insert_alert(
             cand.chain, cand.address, cand.source_key, json.dumps(text_payload)
         )
@@ -585,84 +580,6 @@ class ChainPipeline:
             reason,
             cand.dual_source,
         )
-
-    def _spawn_news_update(
-        self,
-        cand: TokenCandidate,
-        paper: Any,
-        *,
-        latency_sec: float | None,
-        message_ids: list[tuple[int, int]],
-    ) -> None:
-        if not message_ids:
-            return
-        if self.news_poller is None:
-            return
-        news_cfg = self.app_cfg.global_.news
-        if news_cfg is None or not news_cfg.enabled:
-            return
-        if news_cfg.edit_timeout_ms <= 0:
-            return
-        task = asyncio.create_task(
-            self._append_news_line(
-                cand,
-                paper,
-                latency_sec=latency_sec,
-                message_ids=message_ids,
-                timeout_ms=news_cfg.edit_timeout_ms,
-            ),
-            name=f"{self.chain}-news-{cand.address}",
-        )
-
-        self._tasks.append(task)
-
-        def _cleanup(done_task: asyncio.Task[None]) -> None:
-            if done_task in self._tasks:
-                self._tasks.remove(done_task)
-
-        task.add_done_callback(_cleanup)
-
-    async def _append_news_line(
-        self,
-        cand: TokenCandidate,
-        paper: Any,
-        *,
-        latency_sec: float | None,
-        message_ids: list[tuple[int, int]],
-        timeout_ms: int,
-    ) -> None:
-        try:
-            news_line = await asyncio.wait_for(
-                self.news_poller.match_news(cand),
-                timeout=timeout_ms / 1000,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("news_lookup_timeout chain=%s token=%s", cand.chain, cand.address)
-            return
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("news_lookup_failed chain=%s token=%s err=%s", cand.chain, cand.address, exc)
-            return
-
-        if not news_line:
-            return
-
-        try:
-            ok, all_ok = await self.notifier.edit_candidate_with_news(
-                cand,
-                paper=paper,
-                latency_sec=latency_sec,
-                message_ids=message_ids,
-                news_line=news_line,
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("news_edit_failed chain=%s token=%s", cand.chain, cand.address)
-            return
-        if not ok:
-            logger.error("news_edit_all_failed chain=%s token=%s", cand.chain, cand.address)
-            return
-        if not all_ok:
-            logger.warning("news_edit_partial chain=%s token=%s", cand.chain, cand.address)
-
 
 def dig_addr(raw: dict[str, Any]) -> str | None:
     token = raw.get("token")

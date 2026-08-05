@@ -9,7 +9,6 @@
    - `git rev-parse --short HEAD`
 2. 环境变量
    - `GMGN_API_KEY`（BSC / RH）
-   - `OPENNEWS_TOKEN`（可选）
    - Telegram 以及 DB 路径不变
 
 ## 1. BSC 连通性（任务 4.1）

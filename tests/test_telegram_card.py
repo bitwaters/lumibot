@@ -6,7 +6,6 @@ from lumibot.exec_types import ExecResult, PaperTradeEvent
 from lumibot.models import NormalizedSafety, Source, TokenCandidate
 from lumibot.telegram_bot import BOT_COMMANDS, BOT_COMMANDS_GROUP
 from lumibot.telegram_notify import (
-    append_news_line,
     dexscreener_link,
     gmgn_keyboard,
     gmgn_link,
@@ -178,39 +177,6 @@ def test_status_line_states():
     assert "<b>↪️ 未新开</b>" in text
     text = render_card(cand, paper_status="executor_error")
     assert "<b>⛔ 执行异常</b>" in text
-
-
-def test_append_news_line_freeze_insert():
-    cand = _cand()
-    base = render_card(cand, paper=ExecResult(status="opened", notional_usd=20, open_mark=0.00123), latency_sec=1.8)
-    news_line = "📰 相关 token-specific update"
-    enriched = append_news_line(base, news_line)
-    assert enriched.startswith(base.rstrip("\n"))
-    assert enriched.splitlines()[-1] == news_line
-    assert sum(1 for line in enriched.splitlines() if line.startswith("📰")) == 1
-    for key in ("💰 市值", "💧 流动性", "⏱ 延迟", "✅ 已开仓"):
-        assert key in enriched
-
-
-def test_append_news_line_replaces_existing_news_line():
-    base = render_card(_cand(), paper_status="opening")
-    first = append_news_line(base, "📰 相关 first hit")
-    second = append_news_line(first, "📰 市场 market-wide update")
-    lines = second.splitlines()
-    assert sum(1 for line in lines if line.startswith("📰")) == 1
-    assert lines[-1] == "📰 市场 market-wide update"
-
-
-def test_append_news_line_escapes_external_content():
-    base = render_card(_cand(), paper_status="opening")
-    enriched = append_news_line(base, "📰 <b>bold</b> & <script>")
-    assert enriched.splitlines()[-1] == "📰 &lt;b&gt;bold&lt;/b&gt; &amp; &lt;script&gt;"
-
-
-def test_append_news_line_none_returns_original():
-    base = render_card(_cand(), paper_status="opening")
-    assert append_news_line(base, None) == base
-    assert append_news_line(base, "") == base
 
 
 def test_paper_close_event_card():
@@ -670,7 +636,6 @@ def test_all_cards_html_is_well_formed():
         render_card(cand, paper=ExecResult(status="skipped_open"), latency_sec=0.5),
         render_card(cand_trending, paper_status="opening"),
         render_card(_cand(market_cap=None, trigger_mc=None, liquidity=None, top10_rate=None, holder_count=None, visiting_count=None, volume_1h=None, platform=None, open_timestamp=None), paper_status="opening"),
-        append_news_line(render_card(cand, paper_status="opening"), "📰 相关 <b>bold</b> & text"),
         render_paper_event(close_ev),
         render_paper_event(close_ev_fallback),
         render_paper_event(stage1_ev),

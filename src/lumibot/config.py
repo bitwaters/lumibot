@@ -161,25 +161,12 @@ class RateLimitCfg(BaseModel):
     min_interval_sec: float = 1.0
 
 
-class NewsCfg(BaseModel):
-    enabled: bool = False
-    poll_sec: int = 60
-    lookback_min: int = 120
-    min_score: float = 0.6
-    edit_timeout_ms: int = 3000
-    min_symbol_len: int = 3
-    symbol_blocklist: list[str] = Field(default_factory=list)
-    market_coins: list[str] = Field(default_factory=lambda: ["SOL", "ETH", "BTC"])
-    market_keywords: list[str] = Field(default_factory=lambda: ["meme", "meme coin", "pump", "launch"])
-
-
 class GlobalCfg(BaseModel):
     live_master_switch: bool = False
     rate_limit: RateLimitCfg = Field(default_factory=RateLimitCfg)
     enrichment_cache_ttl_sec: int = 300
     security_cache_ttl_sec: int = 3600
     price_source: str = "token_info"
-    news: NewsCfg | None = None
 
 
 class AppConfig(BaseModel):
@@ -206,7 +193,6 @@ class Settings(BaseSettings):
     lumibot_config: str = "config/chains.yaml"
     lumibot_db_path: str = "data/lumibot.db"
     lumibot_skip_ipv4_check: bool = False
-    opennews_token: str = ""
 
     @staticmethod
     def _parse_id_list(raw: str, *, env_name: str) -> list[int]:

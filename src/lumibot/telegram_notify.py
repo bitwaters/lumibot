@@ -249,14 +249,6 @@ def _metric_row(cells: list[tuple[str, str]]) -> str:
     return hcode("  ".join(_metric_cell(label, value) for label, value in cells).rstrip())
 
 
-def append_news_line(card: str, news_line: str | None) -> str:
-    if not news_line:
-        return card
-    lines = [line for line in card.splitlines() if not line.startswith("📰")]
-    lines.append(_esc(news_line))
-    return "\n".join(lines)
-
-
 def render_paper_event(ev: PaperTradeEvent) -> str:
     tag = _chain_tag(ev.chain)
     sym = ev.symbol or ev.token[:8]
@@ -893,31 +885,6 @@ class TelegramNotifier:
     ) -> tuple[bool, bool]:
         return await self.edit_text(
             render_card(cand, paper=paper, latency_sec=latency_sec, paper_status=paper_status),
-            message_ids,
-            reply_markup=gmgn_keyboard(cand.chain, cand.address),
-            disable_preview=True,
-        )
-
-    async def edit_candidate_with_news(
-        self,
-        cand: TokenCandidate,
-        paper: ExecResult | None = None,
-        *,
-        latency_sec: float | None = None,
-        paper_status: str | None = None,
-        message_ids: list[tuple[int, int]],
-        news_line: str | None = None,
-    ) -> tuple[bool, bool]:
-        return await self.edit_text(
-            append_news_line(
-                render_card(
-                    cand,
-                    paper=paper,
-                    latency_sec=latency_sec,
-                    paper_status=paper_status,
-                ),
-                news_line,
-            ),
             message_ids,
             reply_markup=gmgn_keyboard(cand.chain, cand.address),
             disable_preview=True,

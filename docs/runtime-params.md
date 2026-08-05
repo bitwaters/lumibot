@@ -24,13 +24,11 @@ OpenSpec 归档里的 design / delta specs 可能仍写着历史数字（例如�
 | `chains.<name>.sources.*` | `interval_sec` / `window`（含可选 `trending_5m`） | 采集 |
 | `chains.<name>.execution` | `slippage_*` / `mode` / `limits.max_concurrent_positions` | 成交与并发上限 |
 | `global` | `enrichment_cache_ttl_sec` / `security_cache_ttl_sec` / `rate_limit` | 缓存与全局限流 |
-| `global.news` | `enabled` / `poll_sec` / `lookback_min` / `min_score` / `edit_timeout_ms` / `min_symbol_len` / `symbol_blocklist` / `market_coins` / `market_keywords` | OpenNews 增强推送。`enabled=true` 仅在 `OPENNEWS_TOKEN` 存在时生效 |
 
 ## 环境变量
 
 | 键名 | 说明 | 默认 |
 |---|---|---|
-| `OPENNEWS_TOKEN` | OpenNews API 调用凭证。为空时即使 `global.news.enabled=true`，后台也不会启动新闻补充。 |
 | `LUMIBOT_CONFIG` | 配置文件路径，默认 `config/chains.yaml` |
 | `LUMIBOT_DB_PATH` | sqlite 数据库路径，默认 `data/lumibot.db` |
 
