@@ -262,37 +262,10 @@ def append_narrative_line(card: str, narrative_line: str | None) -> str:
 def render_narrative_block(
     info: dict | None, narrative_line: str | None
 ) -> str:
-    """Rich narrative block: 📚 LLM sentence + data-backed line (24h change, buys/sells)."""
+    """Narrative block: single 📚 LLM sentence line (bottom of card)."""
     if not narrative_line:
         return ""
-    lines = [f"📚 {_esc(narrative_line)}"]
-    if info:
-        px = info.get("price")
-        price = px.get("price") if isinstance(px, dict) else None
-        price_24h = px.get("price_24h") if isinstance(px, dict) else None
-        chg = None
-        p_now, p_old = _narrative_float(price), _narrative_float(price_24h)
-        if p_now is not None and p_now > 0 and p_old is not None and p_old > 0:
-            chg = (p_now / p_old) - 1.0
-        buys = px.get("buys_24h") if isinstance(px, dict) else None
-        sells = px.get("sells_24h") if isinstance(px, dict) else None
-        bits: list[str] = []
-        if chg is not None:
-            bits.append(f"24h {chg * 100:+.1f}%")
-        if buys is not None or sells is not None:
-            bits.append(f"🛒 买 {_num(_narrative_float(buys))} / 卖 {_num(_narrative_float(sells))}")
-        if bits:
-            lines.append(f"📈 {' · '.join(bits)}")
-    return "\n".join(lines)
-
-
-def _narrative_float(v: object) -> float | None:
-    try:
-        if v is None or v == "":
-            return None
-        return float(v)
-    except (TypeError, ValueError):
-        return None
+    return f"📚 {_esc(narrative_line)}"
 
 
 def render_paper_event(ev: PaperTradeEvent) -> str:
@@ -754,6 +727,9 @@ def render_query_card(cand: TokenCandidate) -> str:
     if cand.smart_wallets is not None or cand.kol_wallets is not None:
         metrics.append(("🦈 聪明钱", _num(cand.smart_wallets)))
         metrics.append(("🎩 KOL", _num(cand.kol_wallets)))
+    if cand.buys_24h is not None or cand.sells_24h is not None:
+        metrics.append(("🛒 买", _num(cand.buys_24h)))
+        metrics.append(("💸 卖", _num(cand.sells_24h)))
     if cand.platform:
         metrics.append(("🏭 平台", cand.platform))
     rows: list[list[tuple[str, str]]] = [metrics[:1], metrics[1:2]]

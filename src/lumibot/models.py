@@ -60,6 +60,8 @@ class TokenCandidate:
     # Wallet-tag counts from token_info (query card enrichment; None when absent).
     smart_wallets: float | None = None
     kol_wallets: float | None = None
+    buys_24h: float | None = None
+    sells_24h: float | None = None
 
     @property
     def source_key(self) -> str:

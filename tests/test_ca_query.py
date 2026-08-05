@@ -361,7 +361,9 @@ async def test_handle_ca_message_narrative_async_edit():
     assert edits, "narrative edit task should have fired"
     edited_text = edits[0][1]["text"]
     assert "📚 马斯克概念 meme，社区热度高" in edited_text
-    assert "24h +100.0%" in edited_text
+    assert "24h" not in edited_text
+    assert "🛒 买" in edited_text and "1,200" in edited_text
+    assert "💸 卖" in edited_text
 
 
 @pytest.mark.asyncio
@@ -423,14 +425,14 @@ def test_query_card_shows_volume_and_mc():
     assert "1H 成交 $21.9K" in text
 
 
-def test_narrative_block_data_line():
+def test_narrative_block_single_sentence_line():
     from lumibot.telegram_notify import render_narrative_block
 
     info = {"price": {"price": "1.0", "price_24h": "0.5", "buys_24h": 1200, "sells_24h": 800}}
     block = render_narrative_block(info, "特朗普概念官方迷因币，X 讨论度上升")
-    assert "📚 特朗普概念官方迷因币，X 讨论度上升" in block
-    assert "24h +100.0%" in block
-    assert "🛒 买 1,200 / 卖 800" in block
+    assert block == "📚 特朗普概念官方迷因币，X 讨论度上升"
+    assert "24h" not in block
+    assert "🛒" not in block
     assert render_narrative_block(info, None) == ""
     assert render_narrative_block(None, "仅叙事") == "📚 仅叙事"
 

@@ -129,6 +129,10 @@ async def _query_token(
         if isinstance(wts, dict):
             cand.smart_wallets = _as_float(wts.get("smart_wallets"))
             cand.kol_wallets = _as_float(wts.get("renowned_wallets"))
+        px = info.get("price")
+        if isinstance(px, dict):
+            cand.buys_24h = _as_float(px.get("buys_24h"))
+            cand.sells_24h = _as_float(px.get("sells_24h"))
         chain_cfg = app_cfg.chains.get(chain)
         try:
             sec = await client.get_token_security(chain, addr, use_cache=False)
