@@ -181,7 +181,7 @@ def test_query_card_layout():
     assert "<code>💰 市值    ≈ $27.7K</code>" in text
     assert "🔥 热度" in text
     assert "🦈 聪明钱" in text and "🎩 KOL" in text
-    assert "卖税 1.0%" in text
+    assert "税 1.0%（卖）" in text
     assert "已开仓" not in text
     assert "⏱ 延迟" not in text
 

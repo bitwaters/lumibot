@@ -13,7 +13,7 @@ from aiogram.utils.markdown import hbold, hcode
 from lumibot.config import AppConfig
 from lumibot.exec_types import ExecResult, PaperTradeEvent
 from lumibot.models import Source, TokenCandidate
-from lumibot.narrative import extract_social_links
+from lumibot.narrative import deautolink, extract_social_links
 from lumibot.util import chain_tag as _chain_tag
 from lumibot.util import mc_from_price_ratio
 
@@ -272,7 +272,7 @@ def render_narrative_block(info: dict | None, narrative_line: str | None) -> str
     """
     lines: list[str] = []
     if narrative_line:
-        lines.append(f"📚 {_esc(narrative_line)}")
+        lines.append(f"📚 {_esc(deautolink(narrative_line))}")
     links = extract_social_links(info) if info else []
     if links:
         lines.append(f"🔗 {' · '.join(links)}")
@@ -758,13 +758,14 @@ def _safety_line(cand: TokenCandidate) -> str:
     safety = cand.safety
     parts: list[str] = ["🛡 安全 通过"]
     if safety is not None:
-        tax_bits: list[str] = []
-        if safety.buy_tax is not None and safety.buy_tax > 0:
-            tax_bits.append(f"买税 {_pct(safety.buy_tax)}")
-        if safety.sell_tax is not None and safety.sell_tax > 0:
-            tax_bits.append(f"卖税 {_pct(safety.sell_tax)}")
-        if tax_bits:
-            parts.append(" · ".join(tax_bits))
+        buy_tax = safety.buy_tax if safety.buy_tax is not None and safety.buy_tax > 0 else None
+        sell_tax = safety.sell_tax if safety.sell_tax is not None and safety.sell_tax > 0 else None
+        if buy_tax is not None and sell_tax is not None:
+            parts.append(f"税 买 {_pct(buy_tax)} / 卖 {_pct(sell_tax)}")
+        elif buy_tax is not None:
+            parts.append(f"税 {_pct(buy_tax)}（买）")
+        elif sell_tax is not None:
+            parts.append(f"税 {_pct(sell_tax)}（卖）")
         for w in safety.warnings:
             parts.append(f"⚠ {WARN_LABELS.get(w, w)}")
         if safety.wash_trading is True:

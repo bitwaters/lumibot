@@ -112,3 +112,26 @@ def test_cache_ttl_expiry():
     cache2.set("sol", "t", "叙事")
     assert cache2.get("sol", "t") == "叙事"
     assert cache2.get("sol", "other") is None
+
+
+def test_deautolink_breaks_domain_tokens():
+    from lumibot.narrative import deautolink
+
+    out = deautolink("Pump.fun 发行，官网 x.com 上讨论，域名 fun.tld")
+    assert "Pump.\u200bfun" in out
+    assert "x.com" not in out or "\u200b" in out.split("x.com")[0][-1:] + "x.com"
+    # no domain -> unchanged
+    assert deautolink("宗教主题 meme 币，口号耶稣爱你") == "宗教主题 meme 币，口号耶稣爱你"
+    # domain inside sentence stays visually identical modulo ZWSP
+    assert "Pump" in out and "fun" in out
+
+
+def test_narrative_block_deautolinks_sentence_but_not_links():
+    from lumibot.narrative import extract_social_links
+    from lumibot.telegram_notify import render_narrative_block
+
+    info = {"link": {"twitter_username": "RealTrump", "website": "https://trump.fun"}}
+    block = render_narrative_block(info, "官网 trump.fun 上线的宗教主题币")
+    line1 = block.splitlines()[0]
+    assert "trump.\u200bfun" in line1
+    assert '<a href="https://x.com/RealTrump">X</a>' in block  # link line untouched

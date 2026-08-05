@@ -44,7 +44,7 @@ Links MUST be extracted by code from the token_info `link` object, never generat
 - **THEN** the X link is omitted entirely
 
 ### Requirement: Narrative block layout
-The narrative block MUST render as: a `📚` line with the narrative sentence (wrapping to at most two lines) followed by a `🔗` line with the extracted links, when any link exists. The block MUST be the last text lines of the card (signal push cards and CA query cards alike). The block MUST be HTML-escaped and MUST remain valid HTML.
+The narrative block MUST render as: a `📚` line with the narrative sentence (wrapping to at most two lines) followed by a `🔗` line with the extracted links, when any link exists. The block MUST be the last text lines of the card (signal push cards and CA query cards alike). The block MUST be HTML-escaped and MUST remain valid HTML. The narrative sentence MUST have domain-like tokens de-autolinked (zero-width space after the dot) so Telegram clients render them as plain text; the link line's hyperlinks MUST NOT be altered.
 
 #### Scenario: Signal card with links
 - **WHEN** a signal card receives its async narrative edit and the token has social links
