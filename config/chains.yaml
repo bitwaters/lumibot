@@ -108,13 +108,16 @@ chains:
         address: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d"
     platforms: []
     sources:
+      # Rate-limit pressure (2026-08-05): combined SOL+BSC polling exceeded GMGN
+      # quota -> 5-min IP ban. BSC sources paused until SOL recovers, then
+      # re-enabled at reduced intervals (6.4).
       signal:
-        enabled: true
-        interval_sec: 8
+        enabled: false
+        interval_sec: 30
         types: [12, 20]
       trending:
-        enabled: true
-        interval_sec: 30
+        enabled: false
+        interval_sec: 120
         window: 1m
     filters:
       mc_min: 1000
