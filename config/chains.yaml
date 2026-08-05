@@ -174,8 +174,8 @@ chains:
       trail_dynamic: true
 
   robinhood:
-    enabled: false
-    calibration_status: draft
+    enabled: true
+    calibration_status: calibrated
     safety_profile: evm_v1
     quote_tokens:
       - symbol: NATIVE
@@ -184,13 +184,14 @@ chains:
         address: "0x0bd7d308f8e1639fab988df18a8011f41eacad73"
     platforms: []
     sources:
+      # Reduced intervals like bsc: shared GMGN quota is 1 req/s (6.4).
       signal:
         enabled: true
-        interval_sec: 8
+        interval_sec: 30
         types: [12, 20]
       trending:
         enabled: true
-        interval_sec: 30
+        interval_sec: 120
         window: 1m
     filters:
       mc_min: 1000
