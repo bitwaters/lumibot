@@ -52,8 +52,9 @@ chains:
       liquidity_ratio_min: 0.20  # liq/mc >= 20%; prevents shallow-pool tokens (report suggested)
       top10_max: 0.25
       holders_min: 100
-      visiting_min: 200
+      visiting_min: 350
       visiting_min_trending: 250  # trending payload can lag; require slightly higher heat (S6)
+      chase_max_pct: 0.10  # signal only: skip if current price ran >10% past push price (chasing top)
       volume_1h_min: 5000
       volume_mc_ratio_min: 0.05
       age_min_sec: 120    # reject tokens < 2 min old (dev dump risk)
@@ -81,7 +82,7 @@ chains:
         max_concurrent_positions: 3
     strategy:
       notional_usd: 20
-      hard_stop_pct: -0.30
+      hard_stop_pct: -0.20
       stage1_tp_pct: 0.25
       stage1_sell_mode: ratio   # ratio | notional; ratio sells a fixed fraction
       stage1_sell_ratio: 0.50   # sell 50% of qty at stage1; trail the remaining 50%
@@ -90,9 +91,10 @@ chains:
       snapshots_sec: [60, 300, 900, 3600]
       loss_cooldown_min: 180
       post_close_cooldown_min: 45
+      symbol_cooldown_min: 60
       pre_stage1_trail_enable: true
-      pre_stage1_trail_activate_pct: 0.15
-      pre_stage1_trail_drawdown_pct: 0.40
+      pre_stage1_trail_activate_pct: 0.10
+      pre_stage1_trail_drawdown_pct: 0.20
       timeout_extend_if_profitable: true
       timeout_extend_hours: 1.0
       trail_dynamic: true
@@ -108,15 +110,15 @@ chains:
         address: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d"
     platforms: []
     sources:
-      # Rate-limit pressure (2026-08-05): combined SOL+BSC polling exceeded GMGN
-      # quota -> 5-min IP ban. BSC sources paused until SOL recovers, then
-      # re-enabled at reduced intervals (6.4).
+      # Rate-limit pressure (2026-08-05): combined SOL+BSC polling at original
+      # rates plus check-script bursts exceeded GMGN quota -> 5-min IP ban.
+      # Re-enabled at reduced intervals after SOL recovery (6.4).
       signal:
-        enabled: false
+        enabled: true
         interval_sec: 30
         types: [12, 20]
       trending:
-        enabled: false
+        enabled: true
         interval_sec: 120
         window: 1m
     filters:
