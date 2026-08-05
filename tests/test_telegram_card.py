@@ -682,3 +682,12 @@ def test_all_cards_html_is_well_formed():
     ]
     for card in cards:
         _assert_html_ok(card)
+
+
+def test_append_narrative_line_no_double_icon_for_rendered_block():
+    base = render_card(_cand(), paper_status="opening")
+    block = "📚 已渲染的叙事块"
+    enriched = append_narrative_line(base, block)
+    lines = enriched.splitlines()
+    assert sum(1 for line in lines if line.startswith("📚")) == 1
+    assert lines[-1] == block

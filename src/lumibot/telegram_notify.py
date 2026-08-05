@@ -255,7 +255,11 @@ def append_narrative_line(card: str, narrative_line: str | None) -> str:
     if not narrative_line:
         return card
     lines = [line for line in card.splitlines() if not line.startswith("📚")]
-    lines.append(f"📚 {_esc(narrative_line)}")
+    if narrative_line.startswith("📚"):
+        # Already-rendered block (icon + escaped) — append as-is, no double icon.
+        lines.append(narrative_line)
+    else:
+        lines.append(f"📚 {_esc(narrative_line)}")
     return "\n".join(lines)
 
 
