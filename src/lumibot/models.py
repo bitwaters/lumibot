@@ -47,6 +47,9 @@ class TokenCandidate:
     visiting_count: float | None = None
     volume_1h: float | None = None
     price: float | None = None
+    # Signal-only: price from the push payload (chase gate reference). Distinct
+    # from `price`, which may be backfilled from token_info during enrichment.
+    push_price: float | None = None
     platform: str | None = None
     safety: NormalizedSafety | None = None
     raw: dict[str, Any] = field(default_factory=dict)

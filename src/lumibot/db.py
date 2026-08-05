@@ -276,6 +276,18 @@ class Database:
             return None
         return str(row["kind"])
 
+    async def has_symbol_block(self, chain: str, symbol: str) -> bool:
+        """True when a position with the same symbol closed recently (symbol_block armed).
+
+        Symbol comparison is case-insensitive: duplicate pumps reuse the same
+        name in different casings (e.g. "Daisy" / "DAISY").
+        """
+        cur = await self.conn.execute(
+            "SELECT 1 FROM cooldowns WHERE chain=? AND token=? AND kind='symbol_block' AND until_ts>? LIMIT 1",
+            (chain, symbol.lower(), time.time()),
+        )
+        return await cur.fetchone() is not None
+
     async def release_cooldown(self, chain: str, token: str, source_key: str) -> None:
         """Rollback a just-acquired cooldown after notify failure.
 
@@ -532,13 +544,14 @@ class Database:
         *,
         loss_cooldown_min: int = 0,
         post_close_cooldown_min: int = 0,
+        symbol_cooldown_min: int = 0,
     ) -> bool:
         """Close an open position. Returns False if missing/already closed (e.g. after reset)."""
         now = time.time()
 
         async def _tx() -> bool:
             cur = await self.conn.execute(
-                "SELECT chain, token FROM paper_positions WHERE id=? AND status='open'",
+                "SELECT chain, token, symbol FROM paper_positions WHERE id=? AND status='open'",
                 (position_id,),
             )
             pos = await cur.fetchone()
@@ -572,6 +585,15 @@ class Database:
                     ON CONFLICT(chain, token, kind) DO UPDATE SET until_ts=excluded.until_ts
                     """,
                     (chain, token, "loss", now + loss_cooldown_min * 60),
+                )
+            symbol = pos["symbol"] if "symbol" in pos.keys() else None
+            if symbol and symbol_cooldown_min > 0:
+                await self.conn.execute(
+                    """
+                    INSERT INTO cooldowns(chain, token, kind, until_ts) VALUES(?,?,?,?)
+                    ON CONFLICT(chain, token, kind) DO UPDATE SET until_ts=excluded.until_ts
+                    """,
+                    (chain, symbol.lower(), "symbol_block", now + symbol_cooldown_min * 60),
                 )
             await self.conn.commit()
             return True

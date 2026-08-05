@@ -45,6 +45,24 @@ def evaluate_mc_extension(cand: TokenCandidate, cfg: FiltersCfg) -> ExtensionRes
     return ExtensionResult(soft=True, reason="mc_extension_soft")
 
 
+def evaluate_chase(cand: TokenCandidate, current_price: float | None, cfg: FiltersCfg) -> bool:
+    """Signal-only: reject when the market already ran past the push price.
+
+    current_price is the fresh quote fetched at execution time; cand.push_price is
+    the price from the push payload. A large positive gap means the signal arrived
+    late and we would be buying the top of a pump.
+    """
+    if cfg.chase_max_pct <= 0:
+        return False
+    if cand.source != Source.SIGNAL:
+        return False
+    if cand.push_price is None or cand.push_price <= 0:
+        return False
+    if current_price is None or current_price <= 0:
+        return False
+    return current_price > cand.push_price * (1.0 + cfg.chase_max_pct)
+
+
 def apply_light_filters(
     cand: TokenCandidate,
     cfg: FiltersCfg,

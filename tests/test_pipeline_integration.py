@@ -174,7 +174,7 @@ def _pass_info() -> dict[str, Any]:
         "liquidity": 20_000,
         "top10_rate": 0.2,
         "holder_count": 200,
-        "visiting_count": 220,
+        "visiting_count": 400,
         "volume_1h": 50_000,
         "price": 1.0,
     }
@@ -280,7 +280,7 @@ async def test_happy_path_alerts_and_opens_paper(harness):
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
-            "price": 1.0,
+            "price": 2.45,  # within chase_max_pct of fresh quote 2.5
         }
     )
     assert len(notifier.sent) == 1
@@ -337,7 +337,7 @@ async def test_push_card_uses_fresh_snapshot_not_gate_metrics(harness):
             "liquidity": 20_000,
             "top10_rate": 0.2,
             "holder_count": 200,
-            "price": 1.0,
+            "price": 1.95,  # within chase_max_pct of fresh quote 2.0
         }
     )
     assert notifier.paper_status == ["opening", "opened"]

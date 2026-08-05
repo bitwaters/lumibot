@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -251,4 +252,212 @@ async def test_enforce_extension_rejects(tmp_path):
     )
     row = await cur.fetchone()
     assert row is not None and int(row["count"]) >= 1
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_close_arms_symbol_block(tmp_path):
+    """close_paper with symbol_cooldown_min arms a symbol_keyed block."""
+    db = Database(str(tmp_path / "t.db"))
+    await db.connect()
+    pos_id, _ = await db.try_open_paper(
+        "sol", "tokA", 1.05, 20 / 1.05, 20.0, peak_price=1.0, open_mark=1.0, symbol="DAISY"
+    )
+    assert pos_id is not None
+    await db.close_paper(
+        pos_id,
+        0.76,
+        20 / 1.05,
+        15.0,
+        "hard_stop",
+        -5.0,
+        loss_cooldown_min=180,
+        post_close_cooldown_min=45,
+        symbol_cooldown_min=60,
+    )
+    # Different address, same symbol → blocked.
+    assert await db.has_symbol_block("sol", "DAISY") is True
+    # Case-insensitive: "daisy" / "Daisy" are the same name for duplicate pumps.
+    assert await db.has_symbol_block("sol", "daisy") is True
+    assert await db.has_symbol_block("sol", "Daisy") is True
+    # Different symbol → not blocked.
+    assert await db.has_symbol_block("sol", "OTHER") is False
+    # symbol_cooldown_min=0 must not arm.
+    pos_id2, _ = await db.try_open_paper(
+        "sol", "tokB", 1.05, 20 / 1.05, 20.0, peak_price=1.0, open_mark=1.0, symbol="GUSTAV"
+    )
+    assert pos_id2 is not None
+    await db.close_paper(
+        pos_id2,
+        0.76,
+        20 / 1.05,
+        15.0,
+        "hard_stop",
+        -5.0,
+        symbol_cooldown_min=0,
+    )
+    assert await db.has_symbol_block("sol", "GUSTAV") is False
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_symbol_block_rejects_admission(tmp_path):
+    """A signal sharing a recently-closed symbol is rejected as symbol_cooldown."""
+    app = load_app_config("config/chains.yaml")
+    db = Database(str(tmp_path / "t.db"))
+    await db.connect()
+    now = time.time()
+    await db.conn.execute(
+        "INSERT INTO cooldowns(chain, token, kind, until_ts) VALUES(?,?,?,?)",
+        ("sol", "daisy", "symbol_block", now + 3600),
+    )
+    await db.conn.commit()
+
+    client = FakeClient()
+    client.info["dupe"] = _pass_info()
+    client.security["dupe"] = _pass_security_sol()
+    notifier = FakeNotifier(ok=True)
+    pipe = ChainPipeline("sol", app.chains["sol"], app, client, db, notifier)  # type: ignore[arg-type]
+    await pipe._handle_signal(
+        {
+            "address": "dupe",
+            "signal_type": 12,
+            "symbol": "DAISY",
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+        }
+    )
+    assert notifier.sent == []
+    cur = await db.conn.execute(
+        "SELECT count FROM reject_counts WHERE reason='symbol_cooldown'"
+    )
+    row = await cur.fetchone()
+    assert row is not None and int(row["count"]) >= 1
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_symbol_block_catches_info_backfilled_symbol(tmp_path):
+    """Payload without symbol must still be blocked once enrichment learns it."""
+    app = load_app_config("config/chains.yaml")
+    db = Database(str(tmp_path / "t.db"))
+    await db.connect()
+    now = time.time()
+    await db.conn.execute(
+        "INSERT INTO cooldowns(chain, token, kind, until_ts) VALUES(?,?,?,?)",
+        ("sol", "daisy", "symbol_block", now + 3600),
+    )
+    await db.conn.commit()
+
+    client = FakeClient()
+    info = _pass_info()
+    info["symbol"] = "DAISY"  # payload omits symbol; only token_info knows it
+    client.info["dupe2"] = info
+    client.security["dupe2"] = _pass_security_sol()
+    notifier = FakeNotifier(ok=True)
+    pipe = ChainPipeline("sol", app.chains["sol"], app, client, db, notifier)  # type: ignore[arg-type]
+    await pipe._handle_signal(
+        {
+            "address": "dupe2",
+            "signal_type": 12,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+        }
+    )
+    assert notifier.sent == []
+    assert await db.get_open_paper("sol", "dupe2") is None
+    cur = await db.conn.execute(
+        "SELECT count FROM reject_counts WHERE reason='symbol_cooldown'"
+    )
+    row = await cur.fetchone()
+    assert row is not None and int(row["count"]) >= 1
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_chase_rejects_before_open(tmp_path):
+    """Fresh quote way past the push price → chase reject, no open, cooldown released."""
+    app = load_app_config("config/chains.yaml")
+    assert app.chains["sol"].filters.chase_max_pct == 0.10
+    db = Database(str(tmp_path / "t.db"))
+    await db.connect()
+    client = FakeClient()
+    client.info["ch"] = _pass_info()
+    client.security["ch"] = _pass_security_sol()
+    client.prices["ch"] = 2.0   # push price 1.0 → +100% → chase
+    notifier = FakeNotifier(ok=True)
+    pipe = ChainPipeline("sol", app.chains["sol"], app, client, db, notifier)  # type: ignore[arg-type]
+    await pipe._handle_signal(
+        {
+            "address": "ch",
+            "signal_type": 12,
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+            "price": 1.0,
+        }
+    )
+    assert notifier.sent == []
+    assert await db.get_open_paper("sol", "ch") is None
+    cur = await db.conn.execute(
+        "SELECT count FROM reject_counts WHERE reason='chase'"
+    )
+    row = await cur.fetchone()
+    assert row is not None and int(row["count"]) >= 1
+    # source cooldown must be released so a later pass can open
+    cur = await db.conn.execute(
+        "SELECT 1 FROM cooldowns WHERE chain=? AND token=? AND kind=? AND until_ts>?",
+        ("sol", "ch", "signal:12", time.time()),
+    )
+    assert await cur.fetchone() is None
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_alert_payload_captures_filter_features(tmp_path):
+    """alerts payload must persist filter/quote features for offline calibration."""
+    app = load_app_config("config/chains.yaml")
+    db = Database(str(tmp_path / "t.db"))
+    await db.connect()
+    client = FakeClient()
+    client.info["feat"] = {**_pass_info(), "price": 1.0, "market_cap": 40_000}
+    client.security["feat"] = _pass_security_sol()
+    client.prices["feat"] = 1.0
+    notifier = FakeNotifier(ok=True)
+    pipe = ChainPipeline("sol", app.chains["sol"], app, client, db, notifier)  # type: ignore[arg-type]
+    await pipe._handle_signal(
+        {
+            "address": "feat",
+            "signal_type": 12,
+            "symbol": "FEAT",
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+            "price": 1.0,
+        }
+    )
+    cur = await db.conn.execute(
+        "SELECT payload_json FROM alerts ORDER BY id DESC LIMIT 1"
+    )
+    row = await cur.fetchone()
+    assert row is not None
+    payload = json.loads(row["payload_json"])
+    assert payload["market_cap"] is not None
+    assert payload["liquidity"] is not None
+    assert payload["visiting_count"] is not None
+    assert payload["top10_rate"] is not None
+    assert payload["holder_count"] is not None
+    assert payload["volume_1h"] is not None
+    assert payload["push_price"] is not None
+    assert "latency_ms" in payload
     await db.close()

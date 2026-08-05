@@ -1,5 +1,5 @@
 from lumibot.config import FiltersCfg
-from lumibot.filters import apply_light_filters
+from lumibot.filters import apply_light_filters, evaluate_chase
 from lumibot.models import Source, TokenCandidate
 
 
@@ -65,3 +65,42 @@ def test_visiting_min_trending_stricter_than_signal():
 
     trending_ok = _base(source=Source.TRENDING, signal_type=None, visiting_count=250)
     assert apply_light_filters(trending_ok, cfg).ok
+
+
+def test_chase_rejects_when_market_ran_past_push():
+    cfg = FiltersCfg(
+        mc_min=1_000,
+        mc_max=50_000,
+        liquidity_min=5_000,
+        top10_max=0.30,
+        holders_min=100,
+        visiting_min=100,
+        chase_max_pct=0.10,
+    )
+    cand = _base(push_price=1.0)
+    assert evaluate_chase(cand, 1.05, cfg) is False   # +5% < 10%: ok
+    assert evaluate_chase(cand, 1.10, cfg) is False   # exactly at 10%: not "more than"
+    assert evaluate_chase(cand, 1.25, cfg) is True    # +25%: chasing the top
+
+
+def test_chase_signal_only_and_disabled_by_default():
+    cfg = FiltersCfg(
+        mc_min=1_000,
+        mc_max=50_000,
+        liquidity_min=5_000,
+        top10_max=0.30,
+        holders_min=100,
+        visiting_min=100,
+        chase_max_pct=0.10,
+    )
+    # Trending payload prices can lag; chase never applies (no push_price set).
+    trend = _base(source=Source.TRENDING, signal_type=None, price=1.0)
+    assert evaluate_chase(trend, 2.0, cfg) is False
+
+    off = cfg.model_copy(update={"chase_max_pct": 0.0})
+    sig = _base(push_price=1.0)
+    assert evaluate_chase(sig, 2.0, off) is False
+
+    # Missing push price / missing quote can't trigger either.
+    assert evaluate_chase(_base(push_price=None), 2.0, cfg) is False
+    assert evaluate_chase(_base(push_price=1.0), None, cfg) is False

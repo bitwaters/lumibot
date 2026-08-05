@@ -13,6 +13,7 @@ from lumibot.executors import Executor, LiveExecutor, PaperExecutor
 from lumibot.filters import (
     apply_light_filters,
     apply_push_snapshot,
+    evaluate_chase,
     evaluate_mc_extension,
     extract_platform,
     extract_signal_fields,
@@ -144,7 +145,7 @@ class ChainPipeline:
             except Exception:  # noqa: BLE001
                 logger.exception("paper manage failed chain=%s", self.chain)
             # Add jitter to spread requests across chains
-            await self._sleep(15 + random.uniform(0, 3))
+            await self._sleep(5 + random.uniform(0, 2))
 
     async def _sleep(self, sec: float) -> None:
         try:
@@ -202,6 +203,7 @@ class ChainPipeline:
             visiting_count=None,
             volume_1h=fields["volume_1h"],
             price=fields["price"],
+            push_price=fields["price"],
             platform=extract_platform(raw),
             raw=raw,
             seen_at=seen_at,
@@ -277,6 +279,10 @@ class ChainPipeline:
             return
         if block == "post_close":
             await self._reject(cand, "post_close_cooldown")
+            return
+
+        if cand.symbol and await self.db.has_symbol_block(cand.chain, cand.symbol):
+            await self._reject(cand, "symbol_cooldown")
             return
 
         max_open = self.cfg.execution.limits.max_concurrent_positions
@@ -364,10 +370,22 @@ class ChainPipeline:
             await self._reject(cand, reason)
             return
 
+        # Second symbol check: symbol may only be known after enrichment.
+        if cand.symbol and await self.db.has_symbol_block(cand.chain, cand.symbol):
+            await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
+            await self._reject(cand, "symbol_cooldown")
+            return
+
         price, mc, info = await self._fresh_quote(cand)
         if price is None or price <= 0:
             await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
             await self._reject(cand, "no_price")
+            return
+        # Chase gate: if the fresh quote already ran well past the push payload
+        # price, the signal arrived late and opening here buys the top.
+        if evaluate_chase(cand, price, self.cfg.filters):
+            await self.db.release_cooldown(cand.chain, cand.address, cand.source_key)
+            await self._reject(cand, "chase")
             return
         # Push card + open_mark share this uncached snapshot (not gate/enrich cache).
         apply_push_snapshot(cand, info, price=price, market_cap=mc)
@@ -385,6 +403,7 @@ class ChainPipeline:
                 "exec_status": "skipped_open",
                 "ts": send_ts,
             }
+            text_payload.update(self._payload_features(cand))
             if cand.open_timestamp is not None:
                 text_payload["open_timestamp"] = cand.open_timestamp
             if latency_sec is not None:
@@ -417,6 +436,7 @@ class ChainPipeline:
             "dual_source": cand.dual_source,
             "ts": send_ts,
         }
+        text_payload.update(self._payload_features(cand))
         if cand.open_timestamp is not None:
             text_payload["open_timestamp"] = cand.open_timestamp
         if latency_sec is not None:
@@ -514,6 +534,25 @@ class ChainPipeline:
             all_ok,
             text_payload.get("latency_ms"),
         )
+
+    @staticmethod
+    def _payload_features(cand: TokenCandidate) -> dict[str, Any]:
+        """Filter/quote features at push time, for offline calibration later."""
+        out: dict[str, Any] = {
+            "market_cap": cand.market_cap,
+            "liquidity": cand.liquidity,
+            "top10_rate": cand.top10_rate,
+            "holder_count": cand.holder_count,
+            "visiting_count": cand.visiting_count,
+            "volume_1h": cand.volume_1h,
+        }
+        if cand.price is not None:
+            out["price"] = cand.price
+        if cand.push_price is not None:
+            out["push_price"] = cand.push_price
+        if cand.open_timestamp is not None:
+            out["age_sec"] = max(0.0, time.time() - cand.open_timestamp)
+        return out
 
     async def _reject(self, cand: TokenCandidate, reason: str) -> None:
         await self.db.bump_reject(cand.chain, cand.source.value, reason)

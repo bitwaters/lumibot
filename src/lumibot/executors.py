@@ -255,6 +255,7 @@ class PaperExecutor(Executor):
                 pnl,
                 loss_cooldown_min=self.strategy.loss_cooldown_min,
                 post_close_cooldown_min=self.strategy.post_close_cooldown_min,
+                symbol_cooldown_min=self.strategy.symbol_cooldown_min,
             )
             if not closed_ok:
                 return
