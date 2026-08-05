@@ -536,9 +536,61 @@ class ChainPipeline:
             text_payload.get("latency_ms"),
         )
 
+    def _spawn_narrative(
+        self,
+        cand: TokenCandidate,
+        info: dict[str, Any],
+        paper: Any,
+        message_ids: list[tuple[int, int]],
+    ) -> None:
+        """Async narrative enrichment for an opened card. Pure display; failures are silent."""
+        if self.narrative is None or not message_ids:
+            return
+        task = asyncio.create_task(
+            self._append_narrative(cand, info, paper, message_ids),
+            name=f"{self.chain}-narrative-{cand.address}",
+        )
+        self._tasks.append(task)
+
+        def _cleanup(done_task: asyncio.Task[None]) -> None:
+            if done_task in self._tasks:
+                self._tasks.remove(done_task)
+
+        task.add_done_callback(_cleanup)
+
+    async def _append_narrative(
+        self,
+        cand: TokenCandidate,
+        info: dict[str, Any],
+        paper: Any,
+        message_ids: list[tuple[int, int]],
+    ) -> None:
+        try:
+            narrative_line = await self.narrative.narrative_for(cand, info)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "narrative_lookup_failed chain=%s token=%s err=%s", cand.chain, cand.address, exc
+            )
+            return
+        if not narrative_line:
+            return
+        try:
+            ok, _all_ok = await self.notifier.edit_candidate_with_narrative(
+                cand,
+                paper=paper,
+                message_ids=message_ids,
+                narrative_line=narrative_line,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("narrative_edit_failed chain=%s token=%s", cand.chain, cand.address)
+            return
+        if not ok:
+            logger.error("narrative_edit_all_failed chain=%s token=%s", cand.chain, cand.address)
+
     @staticmethod
     def _payload_features(cand: TokenCandidate) -> dict[str, Any]:
         """Filter/quote features at push time, for offline calibration later."""
+        out: dict[str, Any] = {
             "market_cap": cand.market_cap,
             "liquidity": cand.liquidity,
             "top10_rate": cand.top10_rate,
