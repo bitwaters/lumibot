@@ -9,6 +9,7 @@ from lumibot.config import Settings, enabled_chains, load_app_config
 from lumibot.db import Database
 from lumibot.gmgn.client import GmgnClient, RateLimiter
 from lumibot.ipv4 import probe_ipv4_or_raise
+from lumibot.narrative import NarrativeService
 from lumibot.pipeline import ChainPipeline
 from lumibot.telegram_bot import build_dispatcher, register_bot_commands
 from lumibot.telegram_notify import TelegramNotifier
@@ -72,6 +73,21 @@ async def run() -> None:
         len(group_chat_ids),
     )
 
+    narrative_cfg = app_cfg.global_.narrative
+    narrative_service: NarrativeService | None = None
+    if narrative_cfg and narrative_cfg.enabled:
+        if settings.narrative_api_key:
+            narrative_service = NarrativeService(settings.narrative_api_key, narrative_cfg)
+            logger.info(
+                "narrative service enabled model=%s base=%s",
+                narrative_cfg.model,
+                narrative_cfg.base_url,
+            )
+        else:
+            logger.warning(
+                "global.narrative enabled but NARRATIVE_API_KEY is missing; narrative disabled"
+            )
+
     pipelines = [
         ChainPipeline(
             name,
@@ -80,6 +96,7 @@ async def run() -> None:
             client,
             db,
             notifier,
+            narrative=narrative_service,
         )
         for name, cfg in chains.items()
     ]

@@ -6,6 +6,7 @@ from lumibot.exec_types import ExecResult, PaperTradeEvent
 from lumibot.models import NormalizedSafety, Source, TokenCandidate
 from lumibot.telegram_bot import BOT_COMMANDS, BOT_COMMANDS_GROUP
 from lumibot.telegram_notify import (
+    append_narrative_line,
     dexscreener_link,
     gmgn_keyboard,
     gmgn_link,
@@ -178,6 +179,28 @@ def test_status_line_states():
     assert "<b>↪️ 未新开</b>" in text
     text = render_card(cand, paper_status="executor_error")
     assert "<b>⛔ 执行异常</b>" in text
+
+
+def test_append_narrative_line_insert_and_replace():
+    cand = _cand()
+    base = render_card(cand, paper=ExecResult(status="opened", notional_usd=20), latency_sec=1.8)
+    enriched = append_narrative_line(base, "特朗普概念官方迷因币")
+    assert enriched.startswith(base.rstrip("\n"))
+    assert enriched.splitlines()[-1] == "📚 特朗普概念官方迷因币"
+    assert sum(1 for line in enriched.splitlines() if line.startswith("📚")) == 1
+    # second narrative replaces the first
+    again = append_narrative_line(enriched, "AI Agent 概念")
+    lines = again.splitlines()
+    assert sum(1 for line in lines if line.startswith("📚")) == 1
+    assert lines[-1] == "📚 AI Agent 概念"
+
+
+def test_append_narrative_line_escapes_and_none():
+    base = render_card(_cand(), paper_status="opening")
+    enriched = append_narrative_line(base, "<b>bold</b> & <script>")
+    assert enriched.splitlines()[-1] == "📚 &lt;b&gt;bold&lt;/b&gt; &amp; &lt;script&gt;"
+    assert append_narrative_line(base, None) == base
+    assert append_narrative_line(base, "") == base
 
 
 def test_paper_close_event_card():

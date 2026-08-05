@@ -24,11 +24,13 @@ OpenSpec 归档里的 design / delta specs 可能仍写着历史数字（例如�
 | `chains.<name>.sources.*` | `interval_sec` / `window`（含可选 `trending_5m`） | 采集 |
 | `chains.<name>.execution` | `slippage_*` / `mode` / `limits.max_concurrent_positions` | 成交与并发上限 |
 | `global` | `enrichment_cache_ttl_sec` / `security_cache_ttl_sec` / `rate_limit` | 缓存与全局限流 |
+| `global.narrative` | `enabled` / `base_url` / `model` / `timeout_sec` / `min_symbol_len` / `symbol_blocklist` / `cache_ttl_sec` | LLM 叙事标签（DeepSeek，异步追加 📚 行）。`enabled=true` 仅在 `NARRATIVE_API_KEY` 存在时生效 |
 
 ## 环境变量
 
 | 键名 | 说明 | 默认 |
 |---|---|---|
+| `NARRATIVE_API_KEY` | DeepSeek API key。为空时即使 `global.narrative.enabled=true`，叙事标签也不启动（卡片不带 📚 行）。 |
 | `LUMIBOT_CONFIG` | 配置文件路径，默认 `config/chains.yaml` |
 | `LUMIBOT_DB_PATH` | sqlite 数据库路径，默认 `data/lumibot.db` |
 

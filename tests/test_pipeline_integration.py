@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 from unittest.mock import AsyncMock
@@ -65,6 +66,7 @@ class FakeNotifier:
         self.cards: list[str] = []
         self.events: list[Any] = []
         self.edited: list[Any] = []
+        self.narratives: list[str] = []
         self.calls: list[str] = []
 
     async def send_candidate(
@@ -118,6 +120,33 @@ class FakeNotifier:
     async def send_paper_event(self, ev) -> tuple[bool, bool]:
         self.events.append(ev)
         return True, True
+
+    async def edit_candidate_with_narrative(
+        self,
+        cand,
+        paper=None,
+        *,
+        latency_sec=None,
+        message_ids: list[tuple[int, int]] | None = None,
+        paper_status: str | None = None,
+        narrative_line: str = "",
+    ) -> tuple[bool, bool]:
+        self.calls.append("edit_narrative")
+        self.narratives.append(narrative_line)
+        return True, True
+
+
+class FakeNarrative:
+    def __init__(self, line: str | None, *, delay: float = 0.0) -> None:
+        self.line = line
+        self.delay = delay
+        self.calls: list[str] = []
+
+    async def narrative_for(self, cand, info) -> str | None:
+        self.calls.append(cand.address)
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        return self.line
 
 
 def _sol_cfg():
@@ -840,4 +869,101 @@ async def test_closed_snapshots_survive_long_gap(tmp_path):
     await ex.manage_open_positions()
     missing = await db.missing_snapshot_offsets(cur.lastrowid, app.chains["sol"].strategy.snapshots_sec)
     assert missing == []
+    await db.close()
+
+
+@pytest.mark.asyncio
+async def test_narrative_edit_fires_on_opened_only(tmp_path):
+    """Opened cards get the async narrative edit; non-opened states never do."""
+    app = _sol_cfg()
+    db = Database(str(tmp_path / "t.db"))
+    await db.connect()
+    client = FakeClient()
+    notifier = FakeNotifier()
+    narrative = FakeNarrative("特朗普概念官方迷因币")
+    pipe = ChainPipeline(
+        "sol",
+        app.chains["sol"],
+        app,
+        client,
+        db,
+        notifier,
+        narrative=narrative,  # type: ignore[arg-type]
+    )
+
+    # opened path -> narrative lookup + edit
+    client.info["n1"] = _pass_info()
+    client.security["n1"] = _pass_security_sol()
+    client.prices["n1"] = 1.0
+    await pipe._handle_signal(
+        {
+            "address": "n1",
+            "signal_type": 12,
+            "symbol": "TRUMP",
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+            "price": 1.0,
+        }
+    )
+    await asyncio.sleep(0)
+    assert narrative.calls == ["n1"]
+    assert notifier.calls.count("edit_narrative") == 1
+    assert notifier.narratives == ["特朗普概念官方迷因币"]
+
+    # narrative service absent -> no lookup, no edit
+    notifier2 = FakeNotifier()
+    pipe2 = ChainPipeline(
+        "sol", app.chains["sol"], app, client, db, notifier2  # type: ignore[arg-type]
+    )
+    client.info["n2"] = _pass_info()
+    client.security["n2"] = _pass_security_sol()
+    client.prices["n2"] = 1.0
+    await pipe2._handle_signal(
+        {
+            "address": "n2",
+            "signal_type": 12,
+            "symbol": "AGENT",
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+            "price": 1.0,
+        }
+    )
+    await asyncio.sleep(0)
+    assert notifier2.calls.count("edit_narrative") == 0
+
+    # narrative returns None -> no edit
+    notifier3 = FakeNotifier()
+    pipe3 = ChainPipeline(
+        "sol",
+        app.chains["sol"],
+        app,
+        client,
+        db,
+        notifier3,
+        narrative=FakeNarrative(None),  # type: ignore[arg-type]
+    )
+    client.info["n3"] = _pass_info()
+    client.security["n3"] = _pass_security_sol()
+    client.prices["n3"] = 1.0
+    await pipe3._handle_signal(
+        {
+            "address": "n3",
+            "signal_type": 12,
+            "symbol": "TOKENX",
+            "market_cap": 40_000,
+            "trigger_mc": 40_000,
+            "liquidity": 20_000,
+            "top10_rate": 0.2,
+            "holder_count": 200,
+            "price": 1.0,
+        }
+    )
+    await asyncio.sleep(0)
+    assert notifier3.calls.count("edit_narrative") == 0
     await db.close()
