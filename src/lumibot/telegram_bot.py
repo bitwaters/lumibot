@@ -22,8 +22,10 @@ from lumibot.db import Database
 from lumibot.filters import merge_info_fields
 from lumibot.gmgn.client import GmgnClient
 from lumibot.models import Source, TokenCandidate
+from lumibot.narrative import NarrativeService
 from lumibot.safety import evaluate_safety, normalize_security
 from lumibot.telegram_notify import (
+    append_narrative_line,
     gmgn_keyboard,
     render_alerts,
     render_help,
@@ -92,7 +94,7 @@ async def _query_token(
     client: GmgnClient,
     addr: str,
     app_cfg: AppConfig,
-) -> tuple[str | None, TokenCandidate | None]:
+) -> tuple[str | None, TokenCandidate | None, dict | None]:
     """Probe candidate chains and assemble a candidate with info + advisory safety."""
     for chain in _chain_candidates(addr, app_cfg):
         try:
@@ -120,8 +122,8 @@ async def _query_token(
                 )
         except Exception:  # noqa: BLE001 — advisory only, fail open
             logger.warning("ca query security failed chain=%s addr=%s", chain, addr)
-        return chain, cand
-    return None, None
+        return chain, cand, info
+    return None, None, None
 
 
 async def _handle_ca_message(
@@ -132,6 +134,7 @@ async def _handle_ca_message(
     app_cfg: AppConfig,
     throttle: dict[int, float],
     reply: Callable[..., Awaitable[object]],
+    narrative: NarrativeService | None = None,
 ) -> bool:
     """CA-query flow; returns True when the message was consumed."""
     q = app_cfg.global_.ca_query
@@ -146,7 +149,7 @@ async def _handle_ca_message(
         return True
     throttle[chat_id] = now
     try:
-        chain, cand = await _query_token(client, addr, app_cfg)
+        chain, cand, info = await _query_token(client, addr, app_cfg)
     except Exception:  # noqa: BLE001 — GMGN down/429/IP ban
         logger.exception("ca query failed chat_id=%s addr=%s", chat_id, addr)
         await reply("⚠️ GMGN 暂时不可用，请稍后再试。", parse_mode="HTML")
@@ -154,8 +157,15 @@ async def _handle_ca_message(
     if chain is None or cand is None:
         await reply("🔍 未找到该合约（支持 sol / bsc / robinhood）。", parse_mode="HTML")
         return True
+    card = render_query_card(cand)
+    if narrative is not None:
+        try:
+            narrative_line = await narrative.narrative_for(cand, info or {})
+            card = append_narrative_line(card, narrative_line)
+        except Exception:  # noqa: BLE001 — pure display, fail open
+            logger.warning("ca query narrative failed chain=%s addr=%s", chain, addr)
     await reply(
-        render_query_card(cand),
+        card,
         parse_mode="HTML",
         reply_markup=gmgn_keyboard(chain, addr),
     )
@@ -233,6 +243,7 @@ def build_dispatcher(
     client: GmgnClient,
     app_cfg: AppConfig,
     enabled_chains: list[str],
+    narrative: NarrativeService | None = None,
     # Backward-compatible alias used by older callers/tests.
     allowed_chat_ids: set[int] | None = None,
 ) -> Dispatcher:
@@ -447,6 +458,7 @@ def build_dispatcher(
             app_cfg=app_cfg,
             throttle=_query_throttle,
             reply=message.reply,
+            narrative=narrative,
         )
         if handled:
             return

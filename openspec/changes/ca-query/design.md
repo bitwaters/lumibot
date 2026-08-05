@@ -38,7 +38,8 @@ bot 当前对一切非命令文本回复「未知指令」（`telegram_bot.py` f
 
 3. **卡片组装复用现有路径**
    - 候选构造 `TokenCandidate(chain, address, source=Source.TRENDING)`（source 仅作必填字段，查询卡渲染不读）；`merge_info_fields(cand, info, force_visiting=True)` 填充；`evaluate_safety(chain_cfg.safety_profile, normalize_security(sec), chain_cfg.safety)` 得安全行。
-   - `render_query_card(cand)`: 标题 `🔍 {hbold('$'+sym)} · {chain_tag}`；`📍 CA:` code；`📊 指标` 网格 = 价格行（💰 价格，独占）+ 市值行（💰 市值，独占，无触发参照）+ 开盘/流动性 + 持有人/Top10 + 热度/1H 成交 + 平台；`_safety_line` 原样复用；无状态行。
+   - `render_query_card(cand)`: 标题 `🔍 {hbold('$'+sym)} · {chain_tag}`；`📍 CA:` code；`📊 指标` 网格 = 价格行（💰 价格，独占）+ 市值行（💰 市值，独占，无触发参照）+ 开盘/流动性 + 持有人/Top10 + 热度/1H 成交 + 聪明钱/KOL（`wallet_tags_stat.smart_wallets/renowned_wallets`，spike 验证两链返回）+ 平台；`_safety_line` 原样复用；无状态行。
+   - **LLM 叙事（📚）**：查询回复前 `await narrative.narrative_for(cand, info)`（复用 NarrativeService，走其缓存与 eligibility），命中则 `append_narrative_line` 追加 `📚` 行作为末行；失败/不可用 fail-open 不影响回复。查询是交互式单次回复（用户已在等待），不做信号卡的异步 edit 流程。
    - 查询硬失败（hard_fail）不拒答——与信号管道 `_reject` 路径分叉，仅渲染警告。
 
 4. **节流与降级**

@@ -111,6 +111,7 @@ async def run() -> None:
         client=client,
         app_cfg=app_cfg,
         enabled_chains=list(chains.keys()),
+        narrative=narrative_service,
     )
     await register_bot_commands(
         notifier.bot,

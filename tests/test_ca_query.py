@@ -82,7 +82,7 @@ async def test_query_token_sol_direct():
     client.infos[("sol", SOL)] = _info(
         wallet_tags_stat={"smart_wallets": 16, "renowned_wallets": 4}
     )
-    chain, cand = await _query_token(client, SOL, _app())
+    chain, cand, info = await _query_token(client, SOL, _app())
     assert chain == "sol"
     assert cand is not None and cand.symbol == "MUSK"
     assert cand.smart_wallets == 16
@@ -95,7 +95,7 @@ async def test_query_token_empty_shell_moves_on():
     client = FakeClient()
     client.infos[("bsc", EVM)] = {"symbol": "", "address": "", "price": {"price": "0"}}
     client.infos[("robinhood", EVM)] = _info()
-    chain, _ = await _query_token(client, EVM, _app())
+    chain, _c, _i = await _query_token(client, EVM, _app())
     assert chain == "robinhood"
 
 
@@ -103,7 +103,7 @@ async def test_query_token_empty_shell_moves_on():
 async def test_query_token_bsc_hit_no_rh_probe():
     client = FakeClient()
     client.infos[("bsc", EVM)] = _info()
-    chain, cand = await _query_token(client, EVM, _app())
+    chain, cand, infod = await _query_token(client, EVM, _app())
     assert chain == "bsc"
     assert client.calls == [("bsc", EVM)]
 
@@ -113,7 +113,7 @@ async def test_query_token_bsc_404_falls_over_to_rh():
     client = FakeClient()
     client.infos[("bsc", EVM)] = RuntimeError("HTTP 404")
     client.infos[("robinhood", EVM)] = _info()
-    chain, cand = await _query_token(client, EVM, _app())
+    chain, cand, infod = await _query_token(client, EVM, _app())
     assert chain == "robinhood"
     assert client.calls == [("bsc", EVM), ("robinhood", EVM)]
 
@@ -123,7 +123,7 @@ async def test_query_token_all_miss():
     client = FakeClient()
     client.infos[("bsc", EVM)] = RuntimeError("HTTP 404")
     client.infos[("robinhood", EVM)] = {}
-    chain, cand = await _query_token(client, EVM, _app())
+    chain, cand, infod = await _query_token(client, EVM, _app())
     assert chain is None and cand is None
 
 
@@ -132,7 +132,7 @@ async def test_query_token_empty_info_moves_on():
     client = FakeClient()
     client.infos[("bsc", EVM)] = {}
     client.infos[("robinhood", EVM)] = _info()
-    chain, _ = await _query_token(client, EVM, _app())
+    chain, _c, _i = await _query_token(client, EVM, _app())
     assert chain == "robinhood"
 
 
@@ -295,3 +295,59 @@ async def test_handle_ca_message_disabled():
         chat_id=1, text=EVM, client=client, app_cfg=app, throttle={}, reply=reply
     )
     assert handled is False
+
+
+class FakeNarrative:
+    def __init__(self, line: str | None = None, error: bool = False) -> None:
+        self.line = line
+        self.error = error
+
+    async def narrative_for(self, cand, info):
+        if self.error:
+            raise RuntimeError("llm down")
+        return self.line
+
+
+@pytest.mark.asyncio
+async def test_handle_ca_message_appends_narrative():
+    client = FakeClient()
+    client.infos[("bsc", EVM)] = _info()
+    replies: list[tuple] = []
+
+    async def reply(*args, **kwargs):
+        replies.append((args, kwargs))
+
+    handled = await _handle_ca_message(
+        chat_id=1,
+        text=EVM,
+        client=client,
+        app_cfg=_app(),
+        throttle={},
+        reply=reply,
+        narrative=FakeNarrative(line="马斯克概念 meme，社区热度高"),
+    )
+    assert handled is True
+    assert "📚 马斯克概念 meme，社区热度高" in replies[0][0][0]
+
+
+@pytest.mark.asyncio
+async def test_handle_ca_message_narrative_fail_open():
+    client = FakeClient()
+    client.infos[("bsc", EVM)] = _info()
+    replies: list[tuple] = []
+
+    async def reply(*args, **kwargs):
+        replies.append((args, kwargs))
+
+    handled = await _handle_ca_message(
+        chat_id=1,
+        text=EVM,
+        client=client,
+        app_cfg=_app(),
+        throttle={},
+        reply=reply,
+        narrative=FakeNarrative(error=True),
+    )
+    assert handled is True
+    assert "📚" not in replies[0][0][0]
+    assert replies[0][0][0].startswith("🔍 <b>$MUSK</b>")

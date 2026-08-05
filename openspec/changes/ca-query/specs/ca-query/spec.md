@@ -44,7 +44,7 @@ The chain MUST be determined without user input. A base58 address MUST map to `s
 - **THEN** the bot replies that the contract was not found
 
 ### Requirement: Query card layout
-The query card MUST share the card language of signal/command cards: symbol-led `🔍 $SYM · CHAIN` title, `📍 CA:` monospace code block, `📊 指标` section with the aligned monospace metric grid, and the per-chain button group (GMGN + DexScreener). It MUST include a price row (`💰 价格`) in addition to the signal-card metrics. When `wallet_tags_stat` is present in token info, the card MUST also show smart-money and KOL holder counts (`🦈 聪明钱` / `🎩 KOL`). It MUST NOT include a paper status line, latency, or news line. Missing metrics MUST render as `—`.
+The query card MUST share the card language of signal/command cards: symbol-led `🔍 $SYM · CHAIN` title, `📍 CA:` monospace code block, `📊 指标` section with the aligned monospace metric grid, and the per-chain button group (GMGN + DexScreener). It MUST include a price row (`💰 价格`) in addition to the signal-card metrics. When `wallet_tags_stat` is present in token info, the card MUST also show smart-money and KOL holder counts (`🦈 聪明钱` / `🎩 KOL`). When the LLM narrative service is available and eligible, the card MUST also carry a `📚` narrative line as the last text line (fail-open: narrative failure or unavailability MUST NOT block the reply). It MUST NOT include a paper status line or latency line. Missing metrics MUST render as `—`.
 
 #### Scenario: Full query card
 - **WHEN** a contract resolves with full token info and security data

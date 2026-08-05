@@ -24,4 +24,5 @@
 
 ## 4. 部署观察
 
-- [ ] 4.1 部署后私聊/群组各发带 CA 消息验证：sol base58、bsc 0x、robinhood 0x 各一条；`/status` 观察配额占用无异常
+- [x] 4.1 查询卡 LLM 叙事：`build_dispatcher` 接收 `narrative`；`_handle_ca_message` 回复前 `narrative_for` + `append_narrative_line`（fail-open）；`__main__` 传入 narrative_service
+- [ ] 4.2 部署后私聊/群组各发带 CA 消息验证：sol base58、bsc 0x、robinhood 0x 各一条（含 📚 叙事行）；`/status` 观察配额占用无异常
