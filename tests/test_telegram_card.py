@@ -205,7 +205,7 @@ def test_paper_close_event_card():
     assert "📉 <b>$ABC</b> · SOL · 硬止损  <b>-$2.50</b>" in text
     assert "📍 CA: <code>Tok123</code>" in text
     assert "💰 入场市值 <b>$100.0K</b> → 平仓市值 <b>$80.0K</b>" in text
-    assert "⏱ 持仓 3m · 投入 <b>$20.00</b>" in text
+    assert "<code>⏱ 持仓     3m        投入       $20.00</code>" in text
 
 
 def test_paper_close_peak_and_timeout():
@@ -228,7 +228,8 @@ def test_paper_close_peak_and_timeout():
             hold_sec=900,
         )
     )
-    assert "📈 峰值 <b>$135.0K</b>" in text
+    assert "<code>📈 峰值    $135.0K   ⏱ 持仓     15m</code>" in text
+    assert "<code>投入       $24.00</code>" in text
 
 
 def test_paper_close_price_fallback_labels():
@@ -247,8 +248,8 @@ def test_paper_close_price_fallback_labels():
             entry_price=1.0,
         )
     )
-    assert "标记价 0.8 · 盈亏 <b>-$5.00</b>" in text
-    assert "投入 <b>$25.00</b> · 入场价 1" in text
+    assert "<code>标记价     0.8       盈亏       -$5.00</code>" in text
+    assert "<code>投入       $25.00    入场价     1</code>" in text
 
 
 def test_paper_stage1_notional_mode():
@@ -336,9 +337,9 @@ def test_help_and_positions_cards():
     text = render_stats(summary, [])
     assert "📊 模拟统计" in text
     assert "[SOL]" in text
-    assert "投入 <b>$20.00</b>" in text
-    assert "本轮开仓 <b>5</b>  ·  跳过开仓 <b>2</b>" in text
-    assert "硬止损 <b>1/2</b>" in text
+    assert "<code>持仓       1         投入       $20.00</code>" in text
+    assert "<code>本轮开仓   5         跳过开仓   2</code>" in text
+    assert "<code>硬止损     1/2       止损率     50.0%</code>" in text
     assert "close_reason=hard_stop" not in text
     assert "含回本减仓后再次硬止损" in text
     assert "/reset_paper <sol|bsc|robinhood|all> confirm" in text
@@ -376,8 +377,8 @@ def test_stats_status_alerts_are_per_chain():
         }
     )
     assert "[SOL]" in text and "[BSC]" in text
-    assert "本轮开仓 <b>3</b>" in text
-    assert "跳过开仓 <b>1</b>" in text
+    assert "<code>本轮开仓   3         跳过开仓   0</code>" in text
+    assert "<code>本轮开仓   0         跳过开仓   1</code>" in text
     assert text.splitlines()[0] == "<b>📊 模拟统计</b>"
 
     status = render_status(
@@ -514,7 +515,7 @@ def test_rounds_cards():
         ]
     )
     assert "<b>📦 归档轮次</b>" in text
-    assert "已实现 <b>+$24.50</b>" in text
+    assert "round #1786123456   仓位 18   平/在持 15/3   已实现 +$24.50" in text
 
     text = render_rounds(
         [],
@@ -523,9 +524,9 @@ def test_rounds_cards():
         ],
     )
     assert "round #1786123456 详情" in text
-    assert "已实现 <b>+$24.50</b>" in text
-    assert "均盈 <b>+$6.10</b>" in text
-    assert "均亏 <b>-$2.30</b>" in text
+    assert "<code>平/在持    15 / 3    已实现     +$24.50</code>" in text
+    assert "<code>胜率       53%       硬止损     4</code>" in text
+    assert "<code>均盈       +$6.10    均亏       -$2.30</code>" in text
     assert "均赢" not in text
     assert "$-2.30" not in text
 
@@ -538,7 +539,7 @@ def test_reset_paper_cards():
         chain="sol",
     )
     assert "🧹 [SOL] 模拟已重置" in text
-    assert "持仓 <b>3</b>" in text
+    assert "<code>持仓       3         成交       8</code>" in text
     assert "仓位行" not in text
     assert "快照" not in text
     assert "round #123" in text

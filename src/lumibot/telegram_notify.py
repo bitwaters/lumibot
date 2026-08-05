@@ -296,13 +296,21 @@ def render_paper_event(ev: PaperTradeEvent) -> str:
             f"💰 入场市值 {hbold(_usd_compact(ev.entry_mc))} → 平仓市值 "
             f"{hbold(_usd_compact(ev.exit_mc))}  ({_pct(chg)})"
         )
-        extra = f"⏱ 持仓 {format_duration(ev.hold_sec)} · 投入 {hbold(_usd_compact(ev.notional_usd))}"
+        extra = _metric_row(
+            [("⏱ 持仓", format_duration(ev.hold_sec)), ("投入", _usd_compact(ev.notional_usd))]
+        )
         if ev.reason == "trail" and ev.peak_mc is not None:
-            extra = f"📈 峰值 {hbold(_usd_compact(ev.peak_mc))} · {extra}"
-        lines.append(extra)
+            lines.append(
+                _metric_row(
+                    [("📈 峰值", _usd_compact(ev.peak_mc)), ("⏱ 持仓", format_duration(ev.hold_sec))]
+                )
+            )
+            lines.append(_metric_row([("投入", _usd_compact(ev.notional_usd))]))
+        else:
+            lines.append(extra)
     else:
-        lines.append(f"标记价 {_price(ev.mark)} · 盈亏 {hbold(pnl_s)}")
-        lines.append(f"投入 {hbold(_usd_compact(ev.notional_usd))} · 入场价 {_price(ev.entry_price)}")
+        lines.append(_metric_row([("标记价", _price(ev.mark)), ("盈亏", _pnl(ev.pnl))]))
+        lines.append(_metric_row([("投入", _usd_compact(ev.notional_usd)), ("入场价", _price(ev.entry_price))]))
     return "\n".join(lines)
 
 
@@ -372,10 +380,6 @@ def _render_stats_section(chain: str, summary: dict, recent_closed: list) -> lis
     tag = _chain_tag(chain)
     closed = int(summary.get("closed_count") or 0)
     hard_stops = int(summary.get("hard_stop_count") or 0)
-    if closed > 0:
-        hs_line = f"硬止损 {hbold(f'{hard_stops}/{closed}')} · {_pct(hard_stops / closed)}"
-    else:
-        hs_line = "硬止损 —（尚无平仓）"
 
     win_rate = summary.get("win_rate")
     avg_win = summary.get("avg_win_usd")
@@ -393,14 +397,21 @@ def _render_stats_section(chain: str, summary: dict, recent_closed: list) -> lis
 
     lines = [
         hbold(f"[{tag}]"),
-        f"持仓 {hbold(summary.get('open_count', 0))}  ·  投入 {hbold(_usd_compact(summary.get('open_notional')))}",
-        f"已平 {hbold(closed)}  ·  已实现 {hbold(_pnl(float(summary.get('closed_pnl') or 0)))}",
-        f"本轮开仓 {hbold(summary.get('opened_count', 0))}  ·  跳过开仓 {hbold(summary.get('skipped_open_count', 0))}",
-        hs_line,
-        f"胜率 {hbold(win_rate_str)}  ·  盈 {win_count} / 亏 {loss_count}",
-        f"均盈 {hbold(_pnl(avg_win) if avg_win is not None else '—')}  ·  均亏 {hbold(_pnl(avg_loss) if avg_loss is not None else '—')}",
-        f"期望值 {hbold(expectancy_str)}  ·  均持仓 {hbold(avg_hold_str)}",
+        _metric_row([("持仓", str(summary.get("open_count", 0))), ("投入", _usd_compact(summary.get("open_notional")))]),
+        _metric_row([("已平", str(closed)), ("已实现", _pnl(float(summary.get("closed_pnl") or 0)))]),
+        _metric_row([("本轮开仓", str(summary.get("opened_count", 0))), ("跳过开仓", str(summary.get("skipped_open_count", 0)))]),
     ]
+    if closed > 0:
+        lines.append(_metric_row([("硬止损", f"{hard_stops}/{closed}"), ("止损率", _pct(hard_stops / closed))]))
+    else:
+        lines.append("硬止损 —（尚无平仓）")
+    lines.extend(
+        [
+            _metric_row([("胜率", win_rate_str), ("盈/亏", f"{win_count} / {loss_count}")]),
+            _metric_row([("均盈", _pnl(avg_win) if avg_win is not None else "—"), ("均亏", _pnl(avg_loss) if avg_loss is not None else "—")]),
+            _metric_row([("期望值", expectancy_str), ("均持仓", avg_hold_str)]),
+        ]
+    )
     if recent_closed:
         lines.append("最近平仓")
         for row in recent_closed[:5]:
@@ -454,8 +465,9 @@ def render_reset_paper(deleted: dict[str, int], *, chain: str = "all") -> str:
     lines = [
         f"🧹 [{tag}] 模拟已重置",
         "",
-        f"持仓 {hbold(deleted.get('paper_positions', 0))}  ·  成交 {hbold(deleted.get('paper_fills', 0))}  ·  跳过开仓 {hbold(deleted.get('paper_skip_opens', 0))}",
-        f"冷却 {hbold(deleted.get('cooldowns', 0))}  ·  告警 {hbold(deleted.get('alerts', 0))}  ·  拦截 {hbold(deleted.get('reject_counts', 0))}",
+        _metric_row([("持仓", str(deleted.get("paper_positions", 0))), ("成交", str(deleted.get("paper_fills", 0)))]),
+        _metric_row([("跳过开仓", str(deleted.get("paper_skip_opens", 0))), ("冷却", str(deleted.get("cooldowns", 0)))]),
+        _metric_row([("告警", str(deleted.get("alerts", 0))), ("拦截", str(deleted.get("reject_counts", 0)))]),
     ]
     if round_id:
         lines.append("")
@@ -479,9 +491,11 @@ def render_rounds(
         for row in rows:
             pnl = float(row["closed_pnl"] or 0)
             lines.append(
-                f"· round #{row['round_id']}  仓位 {row['positions']} "
-                f"(平 {row['closed_count']} / 在持 {row['open_count']})  "
-                f"已实现 {hbold(_pnl(pnl))}"
+                hcode(
+                    f"round #{row['round_id']}   仓位 {row['positions']}   "
+                    f"平/在持 {row['closed_count']}/{row['open_count']}   "
+                    f"已实现 {_pnl(pnl)}"
+                )
             )
         lines.append("")
         lines.append("用 /rounds <id> 查看某轮详情（例如 /rounds 1786123456）。")
@@ -493,11 +507,17 @@ def render_rounds(
             wr = f"{d['win_rate'] * 100:.0f}%" if d["win_rate"] is not None else "—"
             avg_win = _pnl(float(d["avg_win_usd"] or 0)) if d["avg_win_usd"] is not None else "—"
             avg_loss = _pnl(float(d["avg_loss_usd"] or 0)) if d["avg_loss_usd"] is not None else "—"
+            lines.append(f"· [{chain_tag}]")
             lines.append(
-                f"· [{chain_tag}] 平 {d['closed_count']} / 在持 {d['open_count']}  "
-                f"已实现 {hbold(_pnl(float(d['closed_pnl'] or 0)))}  胜率 {hbold(wr)}  "
-                f"硬止损 {d['hard_stop_count']}  均盈 {hbold(avg_win)}  均亏 {hbold(avg_loss)}"
+                _metric_row(
+                    [
+                        ("平/在持", f"{d['closed_count']} / {d['open_count']}"),
+                        ("已实现", _pnl(float(d["closed_pnl"] or 0))),
+                    ]
+                )
             )
+            lines.append(_metric_row([("胜率", wr), ("硬止损", str(d["hard_stop_count"]))]))
+            lines.append(_metric_row([("均盈", avg_win), ("均亏", avg_loss)]))
         if recent_closed:
             lines.append("")
             lines.append("最近平仓")
