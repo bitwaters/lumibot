@@ -25,6 +25,7 @@ from lumibot.gmgn.client import GmgnClient
 from lumibot.models import Source, TokenCandidate
 from lumibot.narrative import NarrativeService
 from lumibot.safety import evaluate_safety, normalize_security
+from lumibot.telegram_notify import render_narrative_block
 from lumibot.telegram_notify import TelegramNotifier
 
 logger = logging.getLogger(__name__)
@@ -572,7 +573,8 @@ class ChainPipeline:
                 "narrative_lookup_failed chain=%s token=%s err=%s", cand.chain, cand.address, exc
             )
             return
-        if not narrative_line:
+        block = render_narrative_block(info, narrative_line)
+        if not block:
             return
         try:
             ok, _all_ok = await self.notifier.edit_candidate_with_narrative(

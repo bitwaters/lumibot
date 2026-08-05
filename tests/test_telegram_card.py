@@ -15,6 +15,7 @@ from lumibot.telegram_notify import (
     render_alerts,
     render_card,
     render_help,
+    render_narrative_block,
     render_paper_event,
     render_positions,
     render_rejects,
@@ -679,6 +680,11 @@ def test_all_cards_html_is_well_formed():
         render_unknown_command(),
         render_query_card(_cand()),
         render_query_card(_cand(safety=None)),
+        render_narrative_block(
+            {"link": {"twitter_username": "Xyz", "website": "https://x.abc"}},
+            "叙事句 <b>& 内容",
+        ),
+        render_narrative_block({"link": {"telegram": "https://t.me/x"}}, None),
     ]
     for card in cards:
         _assert_html_ok(card)

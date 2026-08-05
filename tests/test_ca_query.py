@@ -434,15 +434,20 @@ def test_query_card_shows_volume_and_mc():
     assert "1H 成交 $21.9K" in text
 
 
-def test_narrative_block_single_sentence_line():
+def test_narrative_block_sentence_and_links():
     from lumibot.telegram_notify import render_narrative_block
 
-    block = render_narrative_block("特朗普概念官方迷因币，X 讨论度上升")
-    assert block == "📚 特朗普概念官方迷因币，X 讨论度上升"
+    info = {"link": {"twitter_username": "RealTrump", "website": "https://trump.fun"}}
+    block = render_narrative_block(info, "特朗普概念官方迷因币，X 讨论度上升")
+    assert block.splitlines()[0] == "📚 特朗普概念官方迷因币，X 讨论度上升"
+    assert '<a href="https://x.com/RealTrump">X</a>' in block
+    assert '<a href="https://trump.fun">官网</a>' in block
     assert "24h" not in block
-    assert "🛒" not in block
-    assert render_narrative_block(None) == ""
-    assert render_narrative_block("") == ""
+    # links render even when the sentence is N/A
+    block_only_links = render_narrative_block(info, None)
+    assert block_only_links == block.splitlines()[1]
+    # no info and no sentence -> empty
+    assert render_narrative_block(None, None) == ""
 
 
 @pytest.mark.asyncio
@@ -472,3 +477,60 @@ async def test_probe_miss_cache_skips_known_misses():
     assert chain2 == "robinhood"
     assert client2.calls == [("robinhood", EVM)]
     _probe_miss_cache.clear()
+
+
+def test_extract_social_links_labels_and_dedupe():
+    from lumibot.narrative import extract_social_links
+
+    info = {
+        "link": {
+            "twitter_username": "RealTrump",
+            "website": "https://trump.fun",
+            "telegram": "https://t.me/trump_token",
+            "discord": "https://discord.gg/trump",
+            "gmgn": "https://gmgn.ai/bsc/token/0x",
+            "geckoterminal": "https://geckoterminal.com/x",
+        }
+    }
+    links = extract_social_links(info)
+    assert links == [
+        '<a href="https://x.com/RealTrump">X</a>',
+        '<a href="https://trump.fun">官网</a>',
+        '<a href="https://t.me/trump_token">TG</a>',
+        '<a href="https://discord.gg/trump">DC</a>',
+    ]
+
+
+def test_extract_social_links_cto_label():
+    from lumibot.narrative import extract_social_links
+
+    info = {
+        "dev": {"cto_flag": "1"},
+        "link": {"twitter_username": "CTOToken", "telegram": "https://t.me/cto_community"},
+    }
+    links = extract_social_links(info)
+    assert any("<a href=\"https://t.me/cto_community\">社区</a>" == l for l in links)
+    assert not any(">TG</a>" == l[-5:] for l in links)
+
+
+def test_extract_social_links_rejects_bad_inputs():
+    from lumibot.narrative import extract_social_links
+
+    # injection / spoof / tweet-path username / non-http
+    info = {
+        "link": {
+            "twitter_username": 'bad" onmouseover="x',
+            "website": "javascript:alert(1)",
+            "telegram": "https://evil.com/\" onclick=\"x",
+        }
+    }
+    assert extract_social_links(info) == []
+    # tweet URL path value -> omitted (not a plain username)
+    info2 = {"link": {"twitter_username": "boycott_pumpfun/status/20846777785494286"}}
+    assert extract_social_links(info2) == []
+    # spoofed domain still renders as 官网 hyperlink (label hides domain; confirm dialog shows URL)
+    info3 = {"link": {"website": "https://gmgn.ai.evil.com"}}
+    links = extract_social_links(info3)
+    assert len(links) == 1 and '<a href="https://gmgn.ai.evil.com">官网</a>' in links[0]
+    assert extract_social_links(None) == []
+    assert extract_social_links({}) == []

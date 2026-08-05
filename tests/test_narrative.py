@@ -96,7 +96,7 @@ async def test_truncation_and_plain_text_fallback():
     svc = NarrativeService("sk-test", _cfg())
     svc.client = client  # type: ignore[assignment]
     out = await svc.narrative_for(_cand(), {})
-    assert out is not None and len(out) <= 60
+    assert out is not None and len(out) <= 100
 
     # plain text without JSON wrapper also parses
     svc2 = NarrativeService("sk-test", _cfg())

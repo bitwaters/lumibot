@@ -13,6 +13,7 @@ from aiogram.utils.markdown import hbold, hcode
 from lumibot.config import AppConfig
 from lumibot.exec_types import ExecResult, PaperTradeEvent
 from lumibot.models import Source, TokenCandidate
+from lumibot.narrative import extract_social_links
 from lumibot.util import chain_tag as _chain_tag
 from lumibot.util import mc_from_price_ratio
 
@@ -263,11 +264,19 @@ def append_narrative_line(card: str, narrative_line: str | None) -> str:
     return "\n".join(lines)
 
 
-def render_narrative_block(narrative_line: str | None) -> str:
-    """Narrative block: single 📚 LLM sentence line (bottom of card)."""
-    if not narrative_line:
-        return ""
-    return f"📚 {_esc(narrative_line)}"
+def render_narrative_block(info: dict | None, narrative_line: str | None) -> str:
+    """Narrative block: 📚 LLM sentence line + 🔗 short-label link line.
+
+    Either line may be absent: links render independently of the sentence, so
+    info-poor tokens with social links still show a 🔗 row.
+    """
+    lines: list[str] = []
+    if narrative_line:
+        lines.append(f"📚 {_esc(narrative_line)}")
+    links = extract_social_links(info) if info else []
+    if links:
+        lines.append(f"🔗 {' · '.join(links)}")
+    return "\n".join(lines)
 
 
 def render_paper_event(ev: PaperTradeEvent) -> str:
@@ -964,7 +973,9 @@ class TelegramNotifier:
         narrative_line: str,
         info: dict | None = None,
     ) -> tuple[bool, bool]:
-        block = render_narrative_block(narrative_line)
+        block = render_narrative_block(info, narrative_line)
+        if not block:
+            return True, True
         return await self.edit_text(
             append_narrative_line(
                 render_card(
