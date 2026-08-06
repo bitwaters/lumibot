@@ -1,28 +1,28 @@
 global:
-  live_master_switch: false
+  live_master_switch: false  # 实盘总开关（false=全部模拟，禁止实盘下单）
   rate_limit:
-    capacity: 20
-    refill_per_sec: 6
-    min_interval_sec: 1.0  # GMGN default limit: 1 req/s; 0 = disable
-  enrichment_cache_ttl_sec: 300
-  security_cache_ttl_sec: 3600
-  price_source: token_info  # token_info | kline
-  manage_interval_sec: 5.0        # paper position manage loop interval (s)
-  dual_source_ttl_sec: 30.0       # dual-source sighting window (s)
-  alerts_per_chain: 5             # /alerts rows per chain
-  trending_defer_budget: 4.0      # trending poll defers when limiter budget below this
+    capacity: 20  # 令牌桶容量：突发请求上限
+    refill_per_sec: 6  # 令牌补充速率：每秒恢复的请求配额
+    min_interval_sec: 1.0  # GMGN 请求最小间隔（秒），默认限流 1 请求/秒；0=关闭
+  enrichment_cache_ttl_sec: 300  # 代币信息（token_info）缓存时长（秒）
+  security_cache_ttl_sec: 3600  # 安全校验（token_security）缓存时长（秒）
+  price_source: token_info  # 价格来源：token_info=代币信息 | kline=K线
+  manage_interval_sec: 5.0  # 持仓管理（止损/止盈检查）循环间隔（秒）
+  dual_source_ttl_sec: 30.0  # 双源确认窗口（秒）：此窗口内另一源也出现则标记双源
+  alerts_per_chain: 5  # /alerts 命令每链显示条数
+  trending_defer_budget: 4.0  # trending 轮询延迟阈值：限流剩余配额低于此值则延后轮询
   ca_query:
-    enabled: true
-    min_interval_sec: 5.0         # per-chat CA query throttle
-    probe_order: [bsc, robinhood] # 0x address probe order among enabled chains
+    enabled: true  # CA 查询功能开关（消息里自动识别合约地址）
+    min_interval_sec: 5.0  # CA 查询最小间隔（秒）：同一聊天防刷限流
+    probe_order: [bsc, robinhood]  # 0x 地址（EVM 链）探测顺序
   narrative:
-    enabled: true
-    base_url: https://api.deepseek.com
-    model: deepseek-chat
-    timeout_sec: 10
-    min_symbol_len: 1  # any symbol eligible (short meme symbols common)
-    symbol_blocklist: []
-    cache_ttl_sec: 3600
+    enabled: true  # 叙事标签功能开关（需 NARRATIVE_API_KEY）
+    base_url: https://api.deepseek.com  # LLM API 地址（OpenAI 兼容格式）
+    model: deepseek-chat  # LLM 模型名
+    timeout_sec: 10  # LLM 请求超时（秒）
+    min_symbol_len: 1  # 参与叙事的最短符号长度（过短跳过，防错配）
+    symbol_blocklist: []  # 叙事黑名单符号（这些币不查叙事）
+    cache_ttl_sec: 3600  # 叙事结果缓存时长（秒），同币 TTL 内只调一次 LLM
 
 # NOTE: strategy is defined per-chain below (chains.<name>.strategy). There is no
 # top-level strategy anymore — each chain's exit/notional behaviour is fully
@@ -30,240 +30,240 @@ global:
 
 chains:
   sol:
-    enabled: true
-    calibration_status: calibrated
-    safety_profile: sol_v1
+    enabled: true  # 链启用开关（启用必须 calibration_status=calibrated）
+    calibration_status: calibrated  # 标定状态：calibrated=已标定（可启用）| draft=草稿（不可启用）
+    safety_profile: sol_v1  # 安全档案：sol_v1（Solana）| evm_v1（EVM 链）
     quote_tokens:
       - symbol: SOL
         address: So11111111111111111111111111111111111111112
       - symbol: USDC
         address: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
-    platforms: []  # empty = allow all; whitelist after observing platform distribution (S4)
+    platforms: []  # 平台白名单（空=全部允许；填入后仅白名单平台过门）
     sources:
       signal:
-        enabled: true
-        interval_sec: 5
-        types: [12, 20]
+        enabled: true  # 信号源开关（GMGN 推送信号，type 12/20）
+        interval_sec: 5  # 轮询间隔（秒）
+        types: [12, 20]  # 信号类型：12=新币 / 20=热门（14-16 禁止，合约坑）
       trending:
-        enabled: true
-        interval_sec: 20
-        window: 1m
+        enabled: true  # 热门榜源开关（1 分钟窗口）
+        interval_sec: 20  # 轮询间隔（秒）
+        window: 1m  # 热门榜单窗口（1m=1分钟 / 5m=5分钟）
       trending_5m:
-        enabled: true
-        interval_sec: 30
-        window: 5m
+        enabled: true  # 5 分钟热门榜源开关
+        interval_sec: 30  # 轮询间隔（秒）
+        window: 5m  # 热门榜单窗口（1m=1分钟 / 5m=5分钟）
     filters:
-      mc_min: 10000
-      mc_max: 50000
-      liquidity_min: 8000
-      liquidity_ratio_min: 0.20  # liq/mc >= 20%; prevents shallow-pool tokens (report suggested)
-      top10_max: 0.25
-      holders_min: 100
-      visiting_min: 350
-      chase_max_pct: 0.05  # one gate for both sources: skip if price ran >5% past payload price
-      volume_1h_min: 5000
-      volume_mc_ratio_min: 0.05
-      age_min_sec: 300    # reject tokens < 2 min old (dev dump risk)
-      age_max_sec: 7200   # reject tokens > 2 h old (momentum likely gone); 0 = disabled
-      max_mc_extension: 2.0
-      enforce_mc_extension: true
+      mc_min: 10000  # 最低市值（美元）
+      mc_max: 50000  # 最高市值（美元）
+      liquidity_min: 8000  # 最低流动性（美元）
+      liquidity_ratio_min: 0.20  # 流动性/市值 最低比例（防浅池）
+      top10_max: 0.25  # Top10 持仓占比上限（防集中砸盘）
+      holders_min: 100  # 最低持有人数
+      visiting_min: 350  # 最低热度（访问量，双源统一一套门槛）
+      chase_max_pct: 0.05  # 追高上限：执行价高于 payload 价超过此比例则跳过（双源统一）
+      volume_1h_min: 5000  # 1 小时成交量下限（美元）；0=关闭
+      volume_mc_ratio_min: 0.05  # 成交量/市值 最低比例；0=关闭
+      age_min_sec: 300  # 代币最小年龄（秒）：防刚开盘（dev 抛售期）追入
+      age_max_sec: 7200  # 代币最大年龄（秒）：动能已过；0=关闭
+      max_mc_extension: 2.0  # 市值相对触发市值最大倍数（signal 源）
+      enforce_mc_extension: true  # 市值延伸是否强制拦截（false=仅记录软标记）
     safety:
-      rug_max: 0.3
-      bundler_max: 0.3
-      rat_max: 0.3
-      tax_max: 0.05
-      strict_missing: true
+      rug_max: 0.3  # Rug 比例上限（>此值拒绝）
+      bundler_max: 0.3  # Bundler 捆绑钱包比例上限
+      rat_max: 0.3  # 老鼠仓（RAT）比例上限
+      tax_max: 0.05  # 买卖税上限（>5% 拒绝）
+      strict_missing: true  # 严格模式：缺失安全字段是否直接拒绝（sol 用 true）
     cooldown:
-      same_type_min: 45
-      cross_source_min: 15
+      same_type_min: 45  # 同源冷却（分钟）：同一来源再次推送间隔
+      cross_source_min: 15  # 跨源冷却（分钟）：另一来源推送间隔
     execution:
-      mode: paper
-      live_enabled: false
-      slippage_buy_pct: 0.05
-      slippage_sell_pct: 0.05
+      mode: paper  # 执行模式：paper=模拟 | live=实盘
+      live_enabled: false  # 实盘开关（需 mode=live 且全局开关开启）
+      slippage_buy_pct: 0.05  # 买入滑点（模拟成交价=标记价×1+滑点）
+      slippage_sell_pct: 0.05  # 卖出滑点（模拟成交价=标记价×1-滑点）
       limits:
-        max_notional_usd: 20
-        daily_loss_usd: 50
-        daily_trades: 10
-        max_concurrent_positions: 3
+        max_notional_usd: 20  # 单笔最大名义金额（美元）
+        daily_loss_usd: 50  # 每日最大亏损（美元，仅 live 模式生效）
+        daily_trades: 10  # 每日最大交易次数（仅 live 模式生效）
+        max_concurrent_positions: 3  # 最大并发持仓（0=不限）
     strategy:
-      notional_usd: 20
-      hard_stop_pct: -0.20
-      early_stop_pct: -0.15  # entry protection: tighter stop for first 120s
-      early_stop_sec: 120
-      momentum_sec: 90             # no-momentum exit window
-      momentum_activate_pct: 0.02  # must have risen 2% to skip the exit
-      momentum_exit_pct: -0.05     # exit when at/below -5% with no momentum
-      stage1_tp_pct: 0.25
-      stage1_sell_mode: ratio   # ratio | notional; ratio sells a fixed fraction
-      stage1_sell_ratio: 0.50   # sell 50% of qty at stage1; trail the remaining 50%
-      trail_drawdown_pct: 0.30
-      timeout_hours: 2
-      snapshots_sec: [60, 300, 900, 3600]
-      loss_cooldown_min: 180
-      post_close_cooldown_min: 45
-      symbol_cooldown_min: 60
-      pre_stage1_trail_enable: true
-      pre_stage1_trail_activate_pct: 0.05
-      pre_stage1_trail_drawdown_pct: 0.20
-      timeout_extend_if_profitable: true
-      timeout_extend_hours: 1.0
-      trail_dynamic: true
+      notional_usd: 20  # 单笔名义金额（美元）
+      hard_stop_pct: -0.20  # 硬止损（相对开仓标记价）
+      early_stop_pct: -0.15  # 入场保护：开仓后前 N 秒用此更紧止损（相对开仓标记）
+      early_stop_sec: 120  # 入场保护时长（秒），之后回落至 hard_stop
+      momentum_sec: 90  # 无动能离场窗口（秒）：窗口内判定
+      momentum_activate_pct: 0.02  # 无动能判定：从未涨过此比例（相对开仓标记）
+      momentum_exit_pct: -0.05  # 无动能判定：现价 ≤ 此比例即离场（固定小亏）
+      stage1_tp_pct: 0.25  # 回本止盈位（相对买入成本含买滑点）
+      stage1_sell_mode: ratio  # 回本减仓模式：ratio=按比例卖 | notional=回收名义金额
+      stage1_sell_ratio: 0.50  # 回本时卖出比例（ratio 模式）
+      trail_drawdown_pct: 0.30  # 回本后峰值回撤平仓比例
+      timeout_hours: 2  # 持仓超时（小时）
+      snapshots_sec: [60, 300, 900, 3600]  # 快照采样偏移（秒）：开仓后 60s/5m/15m/1h 记录价格
+      loss_cooldown_min: 180  # 亏损平仓后再入场冷却（分钟）
+      post_close_cooldown_min: 45  # 普通平仓后再入场冷却（分钟）
+      symbol_cooldown_min: 60  # 同名币冷却（分钟）：平仓后同名（大小写不敏感）不再开
+      pre_stage1_trail_enable: true  # 回本前追踪开关（保护先涨后崩）
+      pre_stage1_trail_activate_pct: 0.05  # 回本前追踪激活涨幅（相对开仓标记）
+      pre_stage1_trail_drawdown_pct: 0.20  # 回本前追踪回撤比例（从峰值回撤此比例离场）
+      timeout_extend_if_profitable: true  # 盈利持仓超时延长开关
+      timeout_extend_hours: 1.0  # 盈利延长时长（小时）
+      trail_dynamic: true  # 动态收紧回撤：涨幅 >2x/5x 时回撤自动收紧到 20%/15%
 
   bsc:
-    enabled: true
-    calibration_status: calibrated
-    safety_profile: evm_v1
+    enabled: true  # 链启用开关（启用必须 calibration_status=calibrated）
+    calibration_status: calibrated  # 标定状态：calibrated=已标定（可启用）| draft=草稿（不可启用）
+    safety_profile: evm_v1  # 安全档案：sol_v1（Solana）| evm_v1（EVM 链）
     quote_tokens:
       - symbol: BNB
         address: "0x0000000000000000000000000000000000000000"
       - symbol: USDC
         address: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d"
-    platforms: []
+    platforms: []  # 平台白名单（空=全部允许；填入后仅白名单平台过门）
     sources:
       # Rate-limit pressure (2026-08-05): combined SOL+BSC polling at original
       # rates plus check-script bursts exceeded GMGN quota -> 5-min IP ban.
       # Re-enabled at reduced intervals after SOL recovery (6.4).
       signal:
-        enabled: true
-        interval_sec: 30
-        types: [12, 20]
+        enabled: true  # 信号源开关（GMGN 推送信号，type 12/20）
+        interval_sec: 30  # 轮询间隔（秒）
+        types: [12, 20]  # 信号类型：12=新币 / 20=热门（14-16 禁止，合约坑）
       trending:
-        enabled: true
-        interval_sec: 120
-        window: 1m
+        enabled: true  # 热门榜源开关（1 分钟窗口）
+        interval_sec: 120  # 轮询间隔（秒）
+        window: 1m  # 热门榜单窗口（1m=1分钟 / 5m=5分钟）
     filters:
-      mc_min: 5000
-      mc_max: 50000
-      liquidity_min: 5000
-      liquidity_ratio_min: 0.15
-      top10_max: 0.30
-      holders_min: 100
-      visiting_min: 200
-      chase_max_pct: 0.10  # one gate for both sources: skip if price ran >10% past payload price
-      volume_1h_min: 0
-      volume_mc_ratio_min: 0
-      age_min_sec: 300
-      age_max_sec: 7200
-      max_mc_extension: 2.0
-      enforce_mc_extension: true
+      mc_min: 5000  # 最低市值（美元）
+      mc_max: 50000  # 最高市值（美元）
+      liquidity_min: 5000  # 最低流动性（美元）
+      liquidity_ratio_min: 0.15  # 流动性/市值 最低比例（防浅池）
+      top10_max: 0.30  # Top10 持仓占比上限（防集中砸盘）
+      holders_min: 100  # 最低持有人数
+      visiting_min: 200  # 最低热度（访问量，双源统一一套门槛）
+      chase_max_pct: 0.10  # 追高上限：执行价高于 payload 价超过此比例则跳过（双源统一）
+      volume_1h_min: 0  # 1 小时成交量下限（美元）；0=关闭
+      volume_mc_ratio_min: 0  # 成交量/市值 最低比例；0=关闭
+      age_min_sec: 300  # 代币最小年龄（秒）：防刚开盘（dev 抛售期）追入
+      age_max_sec: 7200  # 代币最大年龄（秒）：动能已过；0=关闭
+      max_mc_extension: 2.0  # 市值相对触发市值最大倍数（signal 源）
+      enforce_mc_extension: true  # 市值延伸是否强制拦截（false=仅记录软标记）
     safety:
-      rug_max: 0.3
-      bundler_max: 0.3
-      rat_max: 0.3
-      tax_max: 0.05
-      strict_missing: false
+      rug_max: 0.3  # Rug 比例上限（>此值拒绝）
+      bundler_max: 0.3  # Bundler 捆绑钱包比例上限
+      rat_max: 0.3  # 老鼠仓（RAT）比例上限
+      tax_max: 0.05  # 买卖税上限（>5% 拒绝）
+      strict_missing: false  # 严格模式：缺失安全字段是否直接拒绝（sol 用 true）
     cooldown:
-      same_type_min: 45
-      cross_source_min: 15
+      same_type_min: 45  # 同源冷却（分钟）：同一来源再次推送间隔
+      cross_source_min: 15  # 跨源冷却（分钟）：另一来源推送间隔
     execution:
-      mode: paper
-      live_enabled: false
-      slippage_buy_pct: 0.08
-      slippage_sell_pct: 0.08
+      mode: paper  # 执行模式：paper=模拟 | live=实盘
+      live_enabled: false  # 实盘开关（需 mode=live 且全局开关开启）
+      slippage_buy_pct: 0.08  # 买入滑点（模拟成交价=标记价×1+滑点）
+      slippage_sell_pct: 0.08  # 卖出滑点（模拟成交价=标记价×1-滑点）
       limits:
-        max_notional_usd: 20
-        daily_loss_usd: 50
-        daily_trades: 10
-        max_concurrent_positions: 0
+        max_notional_usd: 20  # 单笔最大名义金额（美元）
+        daily_loss_usd: 50  # 每日最大亏损（美元，仅 live 模式生效）
+        daily_trades: 10  # 每日最大交易次数（仅 live 模式生效）
+        max_concurrent_positions: 0  # 最大并发持仓（0=不限）
     strategy:
-      notional_usd: 20
-      hard_stop_pct: -0.20
-      early_stop_pct: -0.15  # entry protection: tighter stop for first 120s
-      early_stop_sec: 120
-      momentum_sec: 90             # no-momentum exit window
-      momentum_activate_pct: 0.02  # must have risen 2% to skip the exit
-      momentum_exit_pct: -0.05     # exit when at/below -5% with no momentum
-      stage1_tp_pct: 0.25
-      stage1_sell_mode: ratio
-      stage1_sell_ratio: 0.50
-      trail_drawdown_pct: 0.30
-      timeout_hours: 2
-      snapshots_sec: [60, 300, 900, 3600]
-      loss_cooldown_min: 180
-      post_close_cooldown_min: 45
-      symbol_cooldown_min: 60
-      pre_stage1_trail_enable: true
-      pre_stage1_trail_activate_pct: 0.05
-      pre_stage1_trail_drawdown_pct: 0.20
-      timeout_extend_if_profitable: false
-      timeout_extend_hours: 1.0
-      trail_dynamic: true
+      notional_usd: 20  # 单笔名义金额（美元）
+      hard_stop_pct: -0.20  # 硬止损（相对开仓标记价）
+      early_stop_pct: -0.15  # 入场保护：开仓后前 N 秒用此更紧止损（相对开仓标记）
+      early_stop_sec: 120  # 入场保护时长（秒），之后回落至 hard_stop
+      momentum_sec: 90  # 无动能离场窗口（秒）：窗口内判定
+      momentum_activate_pct: 0.02  # 无动能判定：从未涨过此比例（相对开仓标记）
+      momentum_exit_pct: -0.05  # 无动能判定：现价 ≤ 此比例即离场（固定小亏）
+      stage1_tp_pct: 0.25  # 回本止盈位（相对买入成本含买滑点）
+      stage1_sell_mode: ratio  # 回本减仓模式：ratio=按比例卖 | notional=回收名义金额
+      stage1_sell_ratio: 0.50  # 回本时卖出比例（ratio 模式）
+      trail_drawdown_pct: 0.30  # 回本后峰值回撤平仓比例
+      timeout_hours: 2  # 持仓超时（小时）
+      snapshots_sec: [60, 300, 900, 3600]  # 快照采样偏移（秒）：开仓后 60s/5m/15m/1h 记录价格
+      loss_cooldown_min: 180  # 亏损平仓后再入场冷却（分钟）
+      post_close_cooldown_min: 45  # 普通平仓后再入场冷却（分钟）
+      symbol_cooldown_min: 60  # 同名币冷却（分钟）：平仓后同名（大小写不敏感）不再开
+      pre_stage1_trail_enable: true  # 回本前追踪开关（保护先涨后崩）
+      pre_stage1_trail_activate_pct: 0.05  # 回本前追踪激活涨幅（相对开仓标记）
+      pre_stage1_trail_drawdown_pct: 0.20  # 回本前追踪回撤比例（从峰值回撤此比例离场）
+      timeout_extend_if_profitable: false  # 盈利持仓超时延长开关
+      timeout_extend_hours: 1.0  # 盈利延长时长（小时）
+      trail_dynamic: true  # 动态收紧回撤：涨幅 >2x/5x 时回撤自动收紧到 20%/15%
 
   robinhood:
-    enabled: true
-    calibration_status: calibrated
-    safety_profile: evm_v1
+    enabled: true  # 链启用开关（启用必须 calibration_status=calibrated）
+    calibration_status: calibrated  # 标定状态：calibrated=已标定（可启用）| draft=草稿（不可启用）
+    safety_profile: evm_v1  # 安全档案：sol_v1（Solana）| evm_v1（EVM 链）
     quote_tokens:
       - symbol: NATIVE
         address: "0x0000000000000000000000000000000000000000"
       - symbol: WETH
         address: "0x0bd7d308f8e1639fab988df18a8011f41eacad73"
-    platforms: []
+    platforms: []  # 平台白名单（空=全部允许；填入后仅白名单平台过门）
     sources:
       # Reduced intervals like bsc: shared GMGN quota is 1 req/s (6.4).
       signal:
-        enabled: true
-        interval_sec: 30
-        types: [12, 20]
+        enabled: true  # 信号源开关（GMGN 推送信号，type 12/20）
+        interval_sec: 30  # 轮询间隔（秒）
+        types: [12, 20]  # 信号类型：12=新币 / 20=热门（14-16 禁止，合约坑）
       trending:
-        enabled: true
-        interval_sec: 120
-        window: 1m
+        enabled: true  # 热门榜源开关（1 分钟窗口）
+        interval_sec: 120  # 轮询间隔（秒）
+        window: 1m  # 热门榜单窗口（1m=1分钟 / 5m=5分钟）
     filters:
-      mc_min: 5000
-      mc_max: 50000
-      liquidity_min: 5000
-      liquidity_ratio_min: 0.15
-      top10_max: 0.30
-      holders_min: 80
-      visiting_min: 200
-      chase_max_pct: 0.10  # one gate for both sources: skip if price ran >10% past payload price
-      volume_1h_min: 0
-      volume_mc_ratio_min: 0
-      age_min_sec: 300
-      age_max_sec: 7200
-      max_mc_extension: 2.0
-      enforce_mc_extension: true
+      mc_min: 5000  # 最低市值（美元）
+      mc_max: 50000  # 最高市值（美元）
+      liquidity_min: 5000  # 最低流动性（美元）
+      liquidity_ratio_min: 0.15  # 流动性/市值 最低比例（防浅池）
+      top10_max: 0.30  # Top10 持仓占比上限（防集中砸盘）
+      holders_min: 80  # 最低持有人数
+      visiting_min: 200  # 最低热度（访问量，双源统一一套门槛）
+      chase_max_pct: 0.10  # 追高上限：执行价高于 payload 价超过此比例则跳过（双源统一）
+      volume_1h_min: 0  # 1 小时成交量下限（美元）；0=关闭
+      volume_mc_ratio_min: 0  # 成交量/市值 最低比例；0=关闭
+      age_min_sec: 300  # 代币最小年龄（秒）：防刚开盘（dev 抛售期）追入
+      age_max_sec: 7200  # 代币最大年龄（秒）：动能已过；0=关闭
+      max_mc_extension: 2.0  # 市值相对触发市值最大倍数（signal 源）
+      enforce_mc_extension: true  # 市值延伸是否强制拦截（false=仅记录软标记）
     safety:
-      rug_max: 0.3
-      bundler_max: 0.3
-      rat_max: 0.3
-      tax_max: 0.05
-      strict_missing: false
+      rug_max: 0.3  # Rug 比例上限（>此值拒绝）
+      bundler_max: 0.3  # Bundler 捆绑钱包比例上限
+      rat_max: 0.3  # 老鼠仓（RAT）比例上限
+      tax_max: 0.05  # 买卖税上限（>5% 拒绝）
+      strict_missing: false  # 严格模式：缺失安全字段是否直接拒绝（sol 用 true）
     cooldown:
-      same_type_min: 45
-      cross_source_min: 15
+      same_type_min: 45  # 同源冷却（分钟）：同一来源再次推送间隔
+      cross_source_min: 15  # 跨源冷却（分钟）：另一来源推送间隔
     execution:
-      mode: paper
-      live_enabled: false
-      slippage_buy_pct: 0.08
-      slippage_sell_pct: 0.08
+      mode: paper  # 执行模式：paper=模拟 | live=实盘
+      live_enabled: false  # 实盘开关（需 mode=live 且全局开关开启）
+      slippage_buy_pct: 0.08  # 买入滑点（模拟成交价=标记价×1+滑点）
+      slippage_sell_pct: 0.08  # 卖出滑点（模拟成交价=标记价×1-滑点）
       limits:
-        max_notional_usd: 20
-        daily_loss_usd: 50
-        daily_trades: 10
-        max_concurrent_positions: 0
+        max_notional_usd: 20  # 单笔最大名义金额（美元）
+        daily_loss_usd: 50  # 每日最大亏损（美元，仅 live 模式生效）
+        daily_trades: 10  # 每日最大交易次数（仅 live 模式生效）
+        max_concurrent_positions: 0  # 最大并发持仓（0=不限）
     strategy:
-      notional_usd: 20
-      hard_stop_pct: -0.20
-      early_stop_pct: -0.15  # entry protection: tighter stop for first 120s
-      early_stop_sec: 120
-      momentum_sec: 90             # no-momentum exit window
-      momentum_activate_pct: 0.02  # must have risen 2% to skip the exit
-      momentum_exit_pct: -0.05     # exit when at/below -5% with no momentum
-      stage1_tp_pct: 0.25
-      stage1_sell_mode: ratio
-      stage1_sell_ratio: 0.50
-      trail_drawdown_pct: 0.30
-      timeout_hours: 2
-      snapshots_sec: [60, 300, 900, 3600]
-      loss_cooldown_min: 180
-      post_close_cooldown_min: 45
-      symbol_cooldown_min: 60
-      pre_stage1_trail_enable: true
-      pre_stage1_trail_activate_pct: 0.05
-      pre_stage1_trail_drawdown_pct: 0.20
-      timeout_extend_if_profitable: false
-      timeout_extend_hours: 1.0
-      trail_dynamic: true
+      notional_usd: 20  # 单笔名义金额（美元）
+      hard_stop_pct: -0.20  # 硬止损（相对开仓标记价）
+      early_stop_pct: -0.15  # 入场保护：开仓后前 N 秒用此更紧止损（相对开仓标记）
+      early_stop_sec: 120  # 入场保护时长（秒），之后回落至 hard_stop
+      momentum_sec: 90  # 无动能离场窗口（秒）：窗口内判定
+      momentum_activate_pct: 0.02  # 无动能判定：从未涨过此比例（相对开仓标记）
+      momentum_exit_pct: -0.05  # 无动能判定：现价 ≤ 此比例即离场（固定小亏）
+      stage1_tp_pct: 0.25  # 回本止盈位（相对买入成本含买滑点）
+      stage1_sell_mode: ratio  # 回本减仓模式：ratio=按比例卖 | notional=回收名义金额
+      stage1_sell_ratio: 0.50  # 回本时卖出比例（ratio 模式）
+      trail_drawdown_pct: 0.30  # 回本后峰值回撤平仓比例
+      timeout_hours: 2  # 持仓超时（小时）
+      snapshots_sec: [60, 300, 900, 3600]  # 快照采样偏移（秒）：开仓后 60s/5m/15m/1h 记录价格
+      loss_cooldown_min: 180  # 亏损平仓后再入场冷却（分钟）
+      post_close_cooldown_min: 45  # 普通平仓后再入场冷却（分钟）
+      symbol_cooldown_min: 60  # 同名币冷却（分钟）：平仓后同名（大小写不敏感）不再开
+      pre_stage1_trail_enable: true  # 回本前追踪开关（保护先涨后崩）
+      pre_stage1_trail_activate_pct: 0.05  # 回本前追踪激活涨幅（相对开仓标记）
+      pre_stage1_trail_drawdown_pct: 0.20  # 回本前追踪回撤比例（从峰值回撤此比例离场）
+      timeout_extend_if_profitable: false  # 盈利持仓超时延长开关
+      timeout_extend_hours: 1.0  # 盈利延长时长（小时）
+      trail_dynamic: true  # 动态收紧回撤：涨幅 >2x/5x 时回撤自动收紧到 20%/15%
