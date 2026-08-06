@@ -18,11 +18,10 @@ OpenSpec 归档里的 design / delta specs 可能仍写着历史数字（例如�
 | `chains.<name>.strategy` | `pre_stage1_trail_*` / `timeout_extend_*` / `trail_dynamic` | 回本前追踪、盈利延时、动态回撤 |
 | `chains.<name>.strategy` | `loss_cooldown_min` / `post_close_cooldown_min` / `symbol_cooldown_min` | 再入场冷却（`0`=关；symbol 冷却按同名币拦截） |
 | `chains.<name>.strategy` | `notional_usd` / `snapshots_sec` | Paper 单仓投入；快照 offset |
-| `chains.<name>.filters` | `mc_*` / `liquidity_min` / `liquidity_ratio_min` / `top10_max` / `holders_min` / `visiting_min` / `visiting_min_trending` | 门禁 |
+| `chains.<name>.filters` | `mc_*` / `liquidity_min` / `liquidity_ratio_min` / `top10_max` / `holders_min` / `visiting_min` | 门禁（双源统一一套阈值） |
 | `chains.<name>.filters` | `volume_1h_min` / `volume_mc_ratio_min` / `age_*` | 量与年龄 |
 | `chains.<name>.filters` | `max_mc_extension` / `enforce_mc_extension` | 市值延伸 |
-| `chains.<name>.filters` | `chase_max_pct` | signal 追高门禁：执行时新报价比推送价高出的比例上限（`0`=关） |
-| `chains.<name>.filters` | `chase_max_pct_trending` | trending 追高门禁（payload 价可能滞后，阈值应更宽；`0`=关） |
+| `chains.<name>.filters` | `chase_max_pct` | 追高门禁（双源统一）：执行时新报价比 payload 价高出的比例上限（`0`=关） |
 | `chains.<name>.sources.*` | `interval_sec` / `window`（含可选 `trending_5m`） | 采集 |
 | `chains.<name>.execution` | `slippage_*` / `mode` / `limits.max_concurrent_positions` | 成交与并发上限 |
 | `global` | `enrichment_cache_ttl_sec` / `security_cache_ttl_sec` / `rate_limit` | 缓存与全局限流 |

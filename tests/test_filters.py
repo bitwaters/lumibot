@@ -46,7 +46,8 @@ def test_sol_defaults_pass():
     assert apply_light_filters(_base(), SOL).ok
 
 
-def test_visiting_min_trending_stricter_than_signal():
+def test_visiting_gate_uniform_across_sources():
+    """One threshold per chain: signal and trending both gate on visiting_min."""
     cfg = FiltersCfg(
         mc_min=1_000,
         mc_max=50_000,
@@ -54,17 +55,15 @@ def test_visiting_min_trending_stricter_than_signal():
         top10_max=0.30,
         holders_min=100,
         visiting_min=200,
-        visiting_min_trending=250,
     )
     signal = _base(source=Source.SIGNAL, visiting_count=220)
     assert apply_light_filters(signal, cfg).ok
+    trending = _base(source=Source.TRENDING, signal_type=None, visiting_count=220)
+    assert apply_light_filters(trending, cfg).ok
 
-    trending_low = _base(source=Source.TRENDING, signal_type=None, visiting_count=220)
-    r = apply_light_filters(trending_low, cfg)
+    low = _base(source=Source.TRENDING, signal_type=None, visiting_count=199)
+    r = apply_light_filters(low, cfg)
     assert not r.ok and r.reason == "visiting"
-
-    trending_ok = _base(source=Source.TRENDING, signal_type=None, visiting_count=250)
-    assert apply_light_filters(trending_ok, cfg).ok
 
 
 def test_chase_rejects_when_market_ran_past_push():
@@ -83,7 +82,8 @@ def test_chase_rejects_when_market_ran_past_push():
     assert evaluate_chase(cand, 1.25, cfg) is True    # +25%: chasing the top
 
 
-def test_chase_signal_only_and_disabled_by_default():
+def test_chase_uniform_across_sources():
+    """One chase threshold per chain applies to both sources."""
     cfg = FiltersCfg(
         mc_min=1_000,
         mc_max=50_000,
@@ -93,34 +93,18 @@ def test_chase_signal_only_and_disabled_by_default():
         visiting_min=100,
         chase_max_pct=0.10,
     )
-    # Trending chase gate defaults to disabled (chase_max_pct_trending=0).
+    # Trending references its payload price (no push_price) with the same gate.
     trend = _base(source=Source.TRENDING, signal_type=None, price=1.0)
-    assert evaluate_chase(trend, 2.0, cfg) is False
-
-    off = cfg.model_copy(update={"chase_max_pct": 0.0})
-    sig = _base(push_price=1.0)
-    assert evaluate_chase(sig, 2.0, off) is False
-
-    # Missing push price / missing quote can't trigger either.
-    assert evaluate_chase(_base(push_price=None), 2.0, cfg) is False
-    assert evaluate_chase(_base(push_price=1.0), None, cfg) is False
-
-
-def test_chase_trending_uses_wider_threshold():
-    cfg = FiltersCfg(
-        mc_min=1_000,
-        mc_max=50_000,
-        liquidity_min=5_000,
-        top10_max=0.30,
-        holders_min=100,
-        visiting_min=100,
-        chase_max_pct=0.10,
-        chase_max_pct_trending=0.20,
-    )
-    # Trending references the payload price (no push_price) with its own threshold.
-    trend = _base(source=Source.TRENDING, signal_type=None, price=1.0)
-    assert evaluate_chase(trend, 1.15, cfg) is False   # +15% < 20%: ok
-    assert evaluate_chase(trend, 1.25, cfg) is True    # +25%: chasing the top
-    # Signal still uses the tight 10% gate.
+    assert evaluate_chase(trend, 1.05, cfg) is False
+    assert evaluate_chase(trend, 1.15, cfg) is True
+    # Signal uses push_price with the same gate.
     sig = _base(push_price=1.0)
     assert evaluate_chase(sig, 1.15, cfg) is True
+
+    off = cfg.model_copy(update={"chase_max_pct": 0.0})
+    assert evaluate_chase(sig, 2.0, off) is False
+
+    # Missing payload price / missing quote can't trigger either.
+    assert evaluate_chase(_base(push_price=None), 2.0, cfg) is False
+    assert evaluate_chase(_base(price=None), 2.0, cfg) is False
+    assert evaluate_chase(_base(push_price=1.0), None, cfg) is False

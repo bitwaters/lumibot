@@ -58,21 +58,16 @@ class FiltersCfg(BaseModel):
     top10_max: float
     holders_min: float
     visiting_min: float
-    # If set, trending candidates use this threshold instead of visiting_min.
-    visiting_min_trending: float | None = None
     volume_1h_min: float = 0           # 0 = disabled
     volume_mc_ratio_min: float = 0     # volume_1h/mc ratio; 0 = disabled
     age_min_sec: int = 0    # reject tokens younger than this; 0 = disabled
     age_max_sec: int = 0    # reject tokens older than this; 0 = disabled
     max_mc_extension: float = 2.0
     enforce_mc_extension: bool = False
-    # Signal-only chase gate: skip when the fresh quote price has run more than
-    # chase_max_pct above the push payload price (signal arrived too late, market
-    # already pumped). 0 = disabled.
+    # Chase gate: skip when the fresh quote price has run more than
+    # chase_max_pct above the payload price (signal arrived too late, market
+    # already pumped). Applied to both sources with one threshold per chain. 0 = disabled.
     chase_max_pct: float = 0.0
-    # Trending chase gate: trending payload prices can lag up to a window; use a
-    # wider threshold than chase_max_pct. 0 = disabled.
-    chase_max_pct_trending: float = 0.0
 
 
 class SafetyThresholds(BaseModel):

@@ -48,25 +48,19 @@ def evaluate_mc_extension(cand: TokenCandidate, cfg: FiltersCfg) -> ExtensionRes
 def evaluate_chase(cand: TokenCandidate, current_price: float | None, cfg: FiltersCfg) -> bool:
     """Reject when the market already ran past the payload price.
 
-    current_price is the fresh quote fetched at execution time. Reference price
-    and threshold are per-source: signal uses the push payload price with
-    chase_max_pct; trending uses the (possibly lagged) payload price with the
-    wider chase_max_pct_trending. A large positive gap means the signal arrived
-    late and we would be buying the top of a pump.
+    current_price is the fresh quote fetched at execution time; cand.price (or
+    cand.push_price for signal) is the payload price. One threshold per chain
+    applies to both sources. A large positive gap means the signal arrived late
+    and we would be buying the top of a pump.
     """
-    if cand.source == Source.SIGNAL:
-        ref = cand.push_price
-        limit = cfg.chase_max_pct
-    else:
-        ref = cand.price
-        limit = cfg.chase_max_pct_trending
-    if limit <= 0:
+    ref = cand.push_price if cand.source == Source.SIGNAL else cand.price
+    if cfg.chase_max_pct <= 0:
         return False
     if ref is None or ref <= 0:
         return False
     if current_price is None or current_price <= 0:
         return False
-    return current_price > ref * (1.0 + limit)
+    return current_price > ref * (1.0 + cfg.chase_max_pct)
 
 
 def apply_light_filters(
@@ -103,10 +97,6 @@ def apply_light_filters(
     if cand.holder_count < cfg.holders_min:
         return FilterResult(False, "holders")
     visiting_min = cfg.visiting_min
-    if cand.source == Source.TRENDING and cfg.visiting_min_trending is not None:
-        # Both sources now gate on token-info visiting; this stays as a per-source
-        # threshold knob, not a payload-lag allowance.
-        visiting_min = cfg.visiting_min_trending
     if cand.visiting_count is None:
         return FilterResult(False, "visiting_missing")
     if cand.visiting_count < visiting_min:
