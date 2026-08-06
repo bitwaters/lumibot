@@ -14,6 +14,7 @@ OpenSpec 归档里的 design / delta specs 可能仍写着历史数字（例如�
 |------|----|------|
 | `chains.<name>.strategy` | `hard_stop_pct` / `stage1_tp_pct` / `trail_drawdown_pct` / `timeout_hours` | 出场（`stage1_tp_pct` 相对 **买入成本含买滑点**；硬止损相对开仓标记） |
 | `chains.<name>.strategy` | `early_stop_pct` / `early_stop_sec` | 入场保护：开仓后前 N 秒用更紧的止损（相对开仓标记），随后回落到 `hard_stop_pct`（`early_stop_sec=0`=关） |
+| `chains.<name>.strategy` | `momentum_sec` / `momentum_activate_pct` / `momentum_exit_pct` | 无动能离场：开仓后 `momentum_sec` 秒内从未涨过 `activate` 且现价 ≤ `exit` 即平仓（固定小亏；`momentum_sec=0`=关） |
 | `chains.<name>.strategy` | `stage1_sell_mode` / `stage1_sell_ratio` | 回本减仓：`ratio` 固定比例 / `notional` 回收本金 |
 | `chains.<name>.strategy` | `pre_stage1_trail_*` / `timeout_extend_*` / `trail_dynamic` | 回本前追踪、盈利延时、动态回撤 |
 | `chains.<name>.strategy` | `loss_cooldown_min` / `post_close_cooldown_min` / `symbol_cooldown_min` | 再入场冷却（`0`=关；symbol 冷却按同名币拦截） |

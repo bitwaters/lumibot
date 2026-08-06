@@ -50,6 +50,44 @@ def test_early_stop_expires_back_to_hard_stop():
     assert action == Action.CLOSE and reason == "hard_stop"
 
 
+def _momentum_order(**kw) -> StrategyOrder:
+    base = dict(
+        chain="sol", token="T", mark=1.0, notional_usd=20,
+        buy_slip=0.0, sell_slip=0.0, opened_at=time.time(),
+        hard_stop_pct=-0.20, momentum_sec=90,
+        momentum_activate_pct=0.02, momentum_exit_pct=-0.05,
+    )
+    base.update(kw)
+    return StrategyOrder.open_from_mark(**base)
+
+
+def test_no_momentum_exit_in_window():
+    o = _momentum_order()
+    # Never rose 2% (peak stays 1.0) and price at -5%: exit.
+    action, reason, _ = o.evaluate(0.95, time.time())
+    assert action == Action.CLOSE and reason == "no_momentum"
+    # Above the -5% line inside the window: hold.
+    o2 = _momentum_order()
+    action, reason, _ = o2.evaluate(0.97, time.time())
+    assert action == Action.HOLD
+
+
+def test_no_momentum_skipped_once_price_rose():
+    o = _momentum_order()
+    o.note_mark(1.03)  # rose past the 2% activate threshold
+    action, reason, _ = o.evaluate(0.95, time.time())
+    assert action == Action.HOLD  # early_stop (-15%? no) -> -5% is not a stop yet
+
+
+def test_no_momentum_expires_after_window():
+    opened = time.time() - 300
+    o = _momentum_order(opened_at=opened)
+    action, reason, _ = o.evaluate(0.95, time.time())
+    assert action == Action.HOLD
+    action, reason, _ = o.evaluate(0.79, time.time())
+    assert action == Action.CLOSE and reason == "hard_stop"
+
+
 def test_hard_stop_ignores_buy_slip_entry():
     """−25% from open_mark must NOT stop when buy slip made entry 5% higher."""
     o = _order(mark=1.0, buy_slip=0.05)

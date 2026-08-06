@@ -107,6 +107,13 @@ class StrategyCfg(BaseModel):
     # open (relative to open_mark), then fall back to hard_stop_pct. 0 = disabled.
     early_stop_pct: float = 0.0
     early_stop_sec: int = 0
+    # No-momentum exit: if within momentum_sec of open the price never rose
+    # momentum_activate_pct above open_mark and now sits at/below
+    # momentum_exit_pct, close immediately (fixed small loss instead of the
+    # deeper early/hard stop). 0 = disabled.
+    momentum_sec: int = 0
+    momentum_activate_pct: float = 0.0
+    momentum_exit_pct: float = 0.0
     stage1_tp_pct: float = 0.25
     trail_drawdown_pct: float = 0.30
     timeout_hours: float = 2

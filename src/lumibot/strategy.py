@@ -40,6 +40,12 @@ class StrategyOrder:
     # early_stop_sec seconds; 0 disables.
     early_stop_pct: float = 0.0
     early_stop_sec: int = 0
+    # No-momentum exit: close within momentum_sec if the price never rose
+    # momentum_activate_pct above open_mark and now trades at/below
+    # momentum_exit_pct; 0 disables.
+    momentum_sec: int = 0
+    momentum_activate_pct: float = 0.0
+    momentum_exit_pct: float = 0.0
 
     @staticmethod
     def buy_fill_price(mark: float, buy_slip: float) -> float:
@@ -74,6 +80,9 @@ class StrategyOrder:
         trail_dynamic: bool = True,
         early_stop_pct: float = 0.0,
         early_stop_sec: int = 0,
+        momentum_sec: int = 0,
+        momentum_activate_pct: float = 0.0,
+        momentum_exit_pct: float = 0.0,
     ) -> StrategyOrder:
         entry = cls.buy_fill_price(mark, buy_slip)
         qty = notional_usd / entry
@@ -104,6 +113,9 @@ class StrategyOrder:
             trail_dynamic=trail_dynamic,
             early_stop_pct=early_stop_pct,
             early_stop_sec=early_stop_sec,
+            momentum_sec=momentum_sec,
+            momentum_activate_pct=momentum_activate_pct,
+            momentum_exit_pct=momentum_exit_pct,
         )
 
     def note_mark(self, mark: float) -> None:
@@ -124,6 +136,16 @@ class StrategyOrder:
     def evaluate(self, mark: float, now: float) -> tuple[Action, str | None, float]:
         """Return (action, reason, qty_to_sell)."""
         self.note_mark(mark)
+
+        # No-momentum exit: never rose 2% above open_mark and now at/below -5%
+        # within the momentum window -> leave at a fixed small loss.
+        if (
+            self.momentum_sec > 0
+            and self.peak_price < self.open_mark * (1.0 + self.momentum_activate_pct)
+            and mark <= self.open_mark * (1.0 + self.momentum_exit_pct)
+            and (now - self.opened_at) < self.momentum_sec
+        ):
+            return Action.CLOSE, "no_momentum", self.qty
 
         stop_pct = self.hard_stop_pct
         stop_reason = "hard_stop"

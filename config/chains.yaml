@@ -63,7 +63,7 @@ chains:
       chase_max_pct: 0.05  # one gate for both sources: skip if price ran >5% past payload price
       volume_1h_min: 5000
       volume_mc_ratio_min: 0.05
-      age_min_sec: 120    # reject tokens < 2 min old (dev dump risk)
+      age_min_sec: 300    # reject tokens < 2 min old (dev dump risk)
       age_max_sec: 7200   # reject tokens > 2 h old (momentum likely gone); 0 = disabled
       max_mc_extension: 2.0
       enforce_mc_extension: true
@@ -91,6 +91,9 @@ chains:
       hard_stop_pct: -0.20
       early_stop_pct: -0.15  # entry protection: tighter stop for first 120s
       early_stop_sec: 120
+      momentum_sec: 90             # no-momentum exit window
+      momentum_activate_pct: 0.02  # must have risen 2% to skip the exit
+      momentum_exit_pct: -0.05     # exit when at/below -5% with no momentum
       stage1_tp_pct: 0.25
       stage1_sell_mode: ratio   # ratio | notional; ratio sells a fixed fraction
       stage1_sell_ratio: 0.50   # sell 50% of qty at stage1; trail the remaining 50%
@@ -101,7 +104,7 @@ chains:
       post_close_cooldown_min: 45
       symbol_cooldown_min: 60
       pre_stage1_trail_enable: true
-      pre_stage1_trail_activate_pct: 0.10
+      pre_stage1_trail_activate_pct: 0.05
       pre_stage1_trail_drawdown_pct: 0.20
       timeout_extend_if_profitable: true
       timeout_extend_hours: 1.0
@@ -140,7 +143,7 @@ chains:
       chase_max_pct: 0.10  # one gate for both sources: skip if price ran >10% past payload price
       volume_1h_min: 0
       volume_mc_ratio_min: 0
-      age_min_sec: 120
+      age_min_sec: 300
       age_max_sec: 7200
       max_mc_extension: 2.0
       enforce_mc_extension: true
@@ -168,6 +171,9 @@ chains:
       hard_stop_pct: -0.20
       early_stop_pct: -0.15  # entry protection: tighter stop for first 120s
       early_stop_sec: 120
+      momentum_sec: 90             # no-momentum exit window
+      momentum_activate_pct: 0.02  # must have risen 2% to skip the exit
+      momentum_exit_pct: -0.05     # exit when at/below -5% with no momentum
       stage1_tp_pct: 0.25
       stage1_sell_mode: ratio
       stage1_sell_ratio: 0.50
@@ -178,7 +184,7 @@ chains:
       post_close_cooldown_min: 45
       symbol_cooldown_min: 60
       pre_stage1_trail_enable: true
-      pre_stage1_trail_activate_pct: 0.10
+      pre_stage1_trail_activate_pct: 0.05
       pre_stage1_trail_drawdown_pct: 0.20
       timeout_extend_if_profitable: false
       timeout_extend_hours: 1.0
@@ -215,7 +221,7 @@ chains:
       chase_max_pct: 0.10  # one gate for both sources: skip if price ran >10% past payload price
       volume_1h_min: 0
       volume_mc_ratio_min: 0
-      age_min_sec: 120
+      age_min_sec: 300
       age_max_sec: 7200
       max_mc_extension: 2.0
       enforce_mc_extension: true
@@ -243,6 +249,9 @@ chains:
       hard_stop_pct: -0.20
       early_stop_pct: -0.15  # entry protection: tighter stop for first 120s
       early_stop_sec: 120
+      momentum_sec: 90             # no-momentum exit window
+      momentum_activate_pct: 0.02  # must have risen 2% to skip the exit
+      momentum_exit_pct: -0.05     # exit when at/below -5% with no momentum
       stage1_tp_pct: 0.25
       stage1_sell_mode: ratio
       stage1_sell_ratio: 0.50
@@ -253,7 +262,7 @@ chains:
       post_close_cooldown_min: 45
       symbol_cooldown_min: 60
       pre_stage1_trail_enable: true
-      pre_stage1_trail_activate_pct: 0.10
+      pre_stage1_trail_activate_pct: 0.05
       pre_stage1_trail_drawdown_pct: 0.20
       timeout_extend_if_profitable: false
       timeout_extend_hours: 1.0

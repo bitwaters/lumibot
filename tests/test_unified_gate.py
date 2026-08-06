@@ -428,7 +428,13 @@ async def test_alert_payload_captures_filter_features(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     await db.connect()
     client = FakeClient()
-    client.info["feat"] = {**_pass_info(), "price": 1.0, "market_cap": 40_000}
+    client.info["feat"] = {
+        **_pass_info(),
+        "price": 1.0,
+        "market_cap": 40_000,
+        "stat": {"top_rat_trader_percentage": 0.25, "top_bundler_trader_percentage": 0.05},
+        "wallet_tags_stat": {"smart_wallets": 7},
+    }
     client.security["feat"] = _pass_security_sol()
     client.prices["feat"] = 1.0
     notifier = FakeNotifier(ok=True)
@@ -459,5 +465,8 @@ async def test_alert_payload_captures_filter_features(tmp_path):
     assert payload["holder_count"] is not None
     assert payload["volume_1h"] is not None
     assert payload["push_price"] is not None
+    assert payload["smart_wallets"] == 7
+    assert payload["rat_ratio"] == 0.25
+    assert payload["bundler_ratio"] == 0.05
     assert "latency_ms" in payload
     await db.close()

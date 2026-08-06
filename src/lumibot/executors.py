@@ -75,6 +75,9 @@ class PaperExecutor(Executor):
             trail_dynamic=self.strategy.trail_dynamic,
             early_stop_pct=self.strategy.early_stop_pct,
             early_stop_sec=self.strategy.early_stop_sec,
+            momentum_sec=self.strategy.momentum_sec,
+            momentum_activate_pct=self.strategy.momentum_activate_pct,
+            momentum_exit_pct=self.strategy.momentum_exit_pct,
         )
         pos_id, skip_reason = await self.db.try_open_paper(
             cand.chain,
@@ -191,6 +194,9 @@ class PaperExecutor(Executor):
             trail_dynamic=self.strategy.trail_dynamic,
             early_stop_pct=self.strategy.early_stop_pct,
             early_stop_sec=self.strategy.early_stop_sec,
+            momentum_sec=self.strategy.momentum_sec,
+            momentum_activate_pct=self.strategy.momentum_activate_pct,
+            momentum_exit_pct=self.strategy.momentum_exit_pct,
         )
         action, reason, sell_qty = order.evaluate(mark, now)
         if order.peak_price != row["peak_price"]:

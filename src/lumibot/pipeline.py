@@ -404,7 +404,7 @@ class ChainPipeline:
                 "exec_status": "skipped_open",
                 "ts": send_ts,
             }
-            text_payload.update(self._payload_features(cand))
+            text_payload.update(self._payload_features(cand, info))
             if cand.open_timestamp is not None:
                 text_payload["open_timestamp"] = cand.open_timestamp
             if latency_sec is not None:
@@ -437,7 +437,7 @@ class ChainPipeline:
             "dual_source": cand.dual_source,
             "ts": send_ts,
         }
-        text_payload.update(self._payload_features(cand))
+        text_payload.update(self._payload_features(cand, info))
         if cand.open_timestamp is not None:
             text_payload["open_timestamp"] = cand.open_timestamp
         if latency_sec is not None:
@@ -591,7 +591,7 @@ class ChainPipeline:
             logger.error("narrative_edit_all_failed chain=%s token=%s", cand.chain, cand.address)
 
     @staticmethod
-    def _payload_features(cand: TokenCandidate) -> dict[str, Any]:
+    def _payload_features(cand: TokenCandidate, info: dict[str, Any] | None = None) -> dict[str, Any]:
         """Filter/quote features at push time, for offline calibration later."""
         out: dict[str, Any] = {
             "market_cap": cand.market_cap,
@@ -607,6 +607,12 @@ class ChainPipeline:
             out["push_price"] = cand.push_price
         if cand.open_timestamp is not None:
             out["age_sec"] = max(0.0, time.time() - cand.open_timestamp)
+        if isinstance(info, dict):
+            stat = info.get("stat") if isinstance(info.get("stat"), dict) else {}
+            wts = info.get("wallet_tags_stat") if isinstance(info.get("wallet_tags_stat"), dict) else {}
+            out["smart_wallets"] = wts.get("smart_wallets")
+            out["rat_ratio"] = stat.get("top_rat_trader_percentage")
+            out["bundler_ratio"] = stat.get("top_bundler_trader_percentage")
         return out
 
     async def _reject(self, cand: TokenCandidate, reason: str) -> None:
